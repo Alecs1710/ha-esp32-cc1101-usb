@@ -5,7 +5,7 @@
   "config_flow": true,
   "documentation": "https://github.com/alex/ha-esp32-cc1101-usb",
   "issue_tracker": "https://github.com/alex/ha-esp32-cc1101-usb/issues",
-  "requirements": ["pyserial-asyncio>=0.6"],
+  "requirements": ["serialx"],
   "version": "1.0.0",
   "iot_class": "local_polling"
 }
