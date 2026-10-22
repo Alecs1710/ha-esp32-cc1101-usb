@@ -1,10 +1,46 @@
+learn_command:
+  name: Learn RF Command (5 Presses)
+  description: Starts learning mode. Press the physical remote button 5 times to average and save the signal permanently.
+  fields:
+    name:
+      name: Command Name
+      description: Friendly name for the button or signal you want to store (e.g., Garage Door, Ceiling Fan Light).
+      required: true
+      example: "Garage Door"
+      selector:
+        text:
+
+send_command:
+  name: Send Saved RF Command
+  description: Transmits a previously learned and stored RF command by its name.
+  fields:
+    name:
+      name: Command Name
+      description: Name of the stored command to transmit.
+      required: true
+      example: "Garage Door"
+      selector:
+        text:
+
+delete_command:
+  name: Delete Saved RF Command
+  description: Removes a stored RF command from persistent storage.
+  fields:
+    name:
+      name: Command Name
+      description: Name of the stored command to delete.
+      required: true
+      example: "Garage Door"
+      selector:
+        text:
+
 send_raw:
-  name: Send RAW Code (ESP32 CC1101)
-  description: Transmits a microsecond pulse sequence over the USB port to the CC1101 transceiver.
+  name: Transmit RAW code (ESP32 CC1101)
+  description: Sends a raw microsecond pulse sequence over the USB port to the CC1101 transceiver.
   fields:
     code:
       name: RAW Sequence
-      description: Comma-separated microsecond duration values.
+      description: Comma-separated string of timings in microseconds.
       required: true
       example: "250,750,250,750,750,250"
       selector:
