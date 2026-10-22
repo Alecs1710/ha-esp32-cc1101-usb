@@ -1,11 +1,11 @@
 {
   "domain": "esp32_cc1101_usb",
   "name": "ESP32 CC1101 USB RF",
-  "codeowners": ["@alex"],
+  "codeowners": ["@Alecs1710"],
   "config_flow": true,
-  "documentation": "https://github.com/alex/ha-esp32-cc1101-usb",
-  "issue_tracker": "https://github.com/alex/ha-esp32-cc1101-usb/issues",
-  "requirements": ["serialx>=0.4.0"],
-  "version": "1.0.1",
+  "documentation": "https://github.com/[[[INSERT DETAIL: Your GitHub Username]]]/ha-esp32-cc1101-usb",
+  "issue_tracker": "https://github.com/[[[INSERT DETAIL: Your GitHub Username]]]/ha-esp32-cc1101-usb/issues",
+  "requirements": ["serialx>=0.4.0", "pyserial>=3.5"],
+  "version": "1.1.0",
   "iot_class": "local_push"
 }
