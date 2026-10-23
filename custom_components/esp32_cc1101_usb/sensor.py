@@ -47,6 +47,7 @@ class Esp32LastCodeSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Last Code"
     _attr_icon = "mdi:radio-tower"
+    _attr_force_update = True
 
     def __init__(self, entry: ConfigEntry, client: Esp32Cc1101Client) -> None:
         self.entry = entry
