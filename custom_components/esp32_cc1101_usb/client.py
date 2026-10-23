@@ -209,6 +209,8 @@ class Esp32Cc1101Client:
         self.connected = True
         _LOGGER.info("Connected to ESP32 CC1101 on %s at %d baud", self.port, self.baudrate)
         self._notify_listeners({"type": "connection", "connected": True})
+        # Query status and firmware version immediately upon connection
+        self.hass.async_create_task(self.async_query_status())
 
     def on_disconnected(self, exc: Exception | None) -> None:
         """Called when transport is disconnected."""

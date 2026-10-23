@@ -35,92 +35,100 @@ def flash_firmware_sync(
 
     file_size = os.path.getsize(firmware_path)
     _LOGGER.info(
-        "Preparing to flash ESP32 on port %s with binary %s (%d bytes) at %d baud",
+        "Preparing to flash ESP32 on port %s with binary %s (%d bytes)",
         port,
         firmware_path,
         file_size,
-        baud,
     )
 
     if progress_callback:
         progress_callback("Connecting to ESP32 bootloader...")
 
-    # Build esptool command arguments
-    cmd = [
-        sys.executable,
-        "-m",
-        "esptool",
-        "--chip",
-        "esp32",
-        "--port",
-        port,
-        "--baud",
-        str(baud),
-        "--before",
-        "default_reset",
-        "--after",
-        "hard_reset",
-        "write_flash",
-        "-z",
-        "--flash_mode",
-        "dio",
-        "--flash_freq",
-        "40m",
-        "0x10000",
-        firmware_path,
-    ]
+    bauds_to_try = [baud]
+    if baud != 115200:
+        bauds_to_try.append(115200)
 
-    try:
-        _LOGGER.debug("Running command: %s", " ".join(cmd))
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=True,
-            timeout=120,
-        )
-        output = result.stdout
-        _LOGGER.info("ESP32 flash completed successfully:\n%s", output)
-        if progress_callback:
-            progress_callback("Flash complete! ESP32 rebooted.")
-        return output
-    except subprocess.CalledProcessError as exc:
-        err_msg = f"esptool failed (exit code {exc.returncode}):\n{exc.stdout}"
-        _LOGGER.error("%s", err_msg)
-        raise RuntimeError(err_msg) from exc
-    except Exception as exc:
-        # Fallback to direct python module call if subprocess fails
-        _LOGGER.warning("Subprocess flash failed (%s), attempting direct esptool call...", exc)
+    last_error: Exception | None = None
+
+    for attempt_baud in bauds_to_try:
+        cmd = [
+            sys.executable,
+            "-m",
+            "esptool",
+            "--chip",
+            "esp32",
+            "--port",
+            port,
+            "--baud",
+            str(attempt_baud),
+            "--before",
+            "default_reset",
+            "--after",
+            "hard_reset",
+            "write_flash",
+            "-z",
+            "--flash_mode",
+            "dio",
+            "--flash_freq",
+            "40m",
+            "0x10000",
+            firmware_path,
+        ]
+
         try:
-            import esptool
+            _LOGGER.info("Flashing ESP32 via esptool at %d baud on %s...", attempt_baud, port)
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=True,
+                timeout=120,
+            )
+            output = result.stdout
+            _LOGGER.info("ESP32 flash completed successfully:\n%s", output)
+            if progress_callback:
+                progress_callback("Flash complete! ESP32 rebooted.")
+            return output
+        except subprocess.CalledProcessError as exc:
+            err_msg = f"esptool at {attempt_baud} baud failed (exit code {exc.returncode}):\n{exc.stdout}"
+            _LOGGER.warning("%s", err_msg)
+            last_error = exc
+        except Exception as exc:
+            _LOGGER.warning("Subprocess flash at %d baud failed: %s", attempt_baud, exc)
+            last_error = exc
 
-            esptool_args = [
-                "--chip",
-                "esp32",
-                "--port",
-                port,
-                "--baud",
-                str(baud),
-                "--before",
-                "default_reset",
-                "--after",
-                "hard_reset",
-                "write_flash",
-                "-z",
-                "--flash_mode",
-                "dio",
-                "--flash_freq",
-                "40m",
-                "0x10000",
-                firmware_path,
-            ]
-            try:
-                esptool.main(esptool_args)
-            except SystemExit as sys_exit:
-                if sys_exit.code != 0:
-                    raise RuntimeError(f"esptool exited with code {sys_exit.code}") from sys_exit
-            return "ESP32 firmware flashed via internal module successfully."
-        except Exception as inner_exc:
-            _LOGGER.error("Direct esptool call also failed: %s", inner_exc)
-            raise RuntimeError(f"Firmware flash failed: {inner_exc}") from inner_exc
+    # Final fallback: direct Python module call
+    _LOGGER.info("Attempting direct in-process esptool module call...")
+    try:
+        import esptool
+
+        esptool_args = [
+            "--chip",
+            "esp32",
+            "--port",
+            port,
+            "--baud",
+            "115200",
+            "--before",
+            "default_reset",
+            "--after",
+            "hard_reset",
+            "write_flash",
+            "-z",
+            "--flash_mode",
+            "dio",
+            "--flash_freq",
+            "40m",
+            "0x10000",
+            firmware_path,
+        ]
+        try:
+            esptool.main(esptool_args)
+        except SystemExit as sys_exit:
+            if sys_exit.code != 0:
+                raise RuntimeError(f"esptool exited with code {sys_exit.code}") from sys_exit
+        return "ESP32 firmware flashed via internal module successfully."
+    except Exception as inner_exc:
+        _LOGGER.error("Direct esptool call also failed: %s", inner_exc)
+        raise RuntimeError(f"Firmware flash failed on port {port}: {last_error or inner_exc}") from inner_exc

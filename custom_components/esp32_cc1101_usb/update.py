@@ -53,17 +53,27 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
             sw_version=client.version or "3.5.0",
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Register client listener."""
+        self.async_on_remove(
+            self._client.register_listener(self._handle_client_update)
+        )
+
+    def _handle_client_update(self, data: dict[str, Any]) -> None:
+        if data.get("type") in ("telemetry", "connection"):
+            self.async_write_ha_state()
+
     @property
     def installed_version(self) -> str | None:
         """Version currently installed on device."""
-        return self._client.version or "3.5.0"
+        if not self._client.version or self._client.version in ("Unknown", "None", ""):
+            return "3.5.0"
+        return self._client.version
 
     @property
     def latest_version(self) -> str | None:
         """Latest available version bundled in the integration."""
-        if os.path.isfile(get_default_firmware_path()):
-            return TARGET_FW_VERSION
-        return self.installed_version
+        return TARGET_FW_VERSION
 
     async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
         """Flash latest firmware to ESP32."""
