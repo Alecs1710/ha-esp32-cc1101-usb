@@ -270,3 +270,22 @@ ping:
       selector:
         config_entry:
           integration: esp32_cc1101_usb
+
+flash_firmware:
+  name: Flash ESP32 Firmware
+  description: Flashes new firmware to the connected ESP32 directly via USB serial without unplugging or VM restarts.
+  fields:
+    file_path:
+      name: Firmware Binary Path
+      description: Optional path to a .bin firmware file. If omitted, uses the bundled firmware.bin in the integration.
+      required: false
+      example: "/config/custom_components/esp32_cc1101_usb/firmware.bin"
+      selector:
+        text:
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID if multiple transceivers are connected.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb

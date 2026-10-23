@@ -267,7 +267,15 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         """Manage the ESP32 CC1101 options."""
         if user_input is not None:
             preset = user_input.get("freq_preset")
-            if preset and preset in FREQUENCY_PRESET_MAP:
+            entered_freq = user_input.get(CONF_FREQUENCY)
+            cur_freq_opt = self.config_entry.options.get(
+                CONF_FREQUENCY,
+                self.config_entry.data.get(CONF_FREQUENCY, DEFAULT_FREQUENCY),
+            )
+            # If the user modified the numeric frequency box, prioritize the custom frequency
+            if entered_freq is not None and abs(float(entered_freq) - float(cur_freq_opt)) > 0.001:
+                user_input[CONF_FREQUENCY] = float(entered_freq)
+            elif preset and preset in FREQUENCY_PRESET_MAP:
                 user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP[preset]
 
             return self.async_create_entry(title="", data=user_input)

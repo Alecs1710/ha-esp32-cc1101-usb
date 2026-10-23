@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 import logging
+import os
 import time
 from typing import Any
 import voluptuous as vol
@@ -17,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
 
 from .client import Esp32Cc1101Client
+from .flasher import flash_firmware_sync, get_default_firmware_path
 from .const import (
     DOMAIN,
     CONF_FREQUENCY,
@@ -42,7 +44,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["remote", "sensor", "select", "number", "button"]
+PLATFORMS = ["remote", "sensor", "select", "number", "button", "update"]
 
 SERVICE_SEND_RAW_SCHEMA = vol.Schema(
     {
@@ -101,6 +103,13 @@ SERVICE_DELETE_COMMAND_SCHEMA = vol.Schema(
 
 SERVICE_PING_SCHEMA = vol.Schema(
     {
+        vol.Optional("config_entry_id"): cv.string,
+    }
+)
+
+SERVICE_FLASH_FIRMWARE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("file_path"): cv.string,
         vol.Optional("config_entry_id"): cv.string,
     }
 )
@@ -294,6 +303,61 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _, data = _get_entry_data(hass, call.data.get("config_entry_id"))
             await data["client"].async_ping()
 
+        async def async_flash_firmware_service(call: ServiceCall) -> None:
+            entry_id, data = _get_entry_data(hass, call.data.get("config_entry_id"))
+            client: Esp32Cc1101Client = data["client"]
+            port = client.port
+            if not port:
+                raise HomeAssistantError("Serial port not available for device")
+
+            file_path = call.data.get("file_path") or get_default_firmware_path()
+            if not os.path.isfile(file_path):
+                raise HomeAssistantError(f"Firmware binary not found at '{file_path}'")
+
+            _LOGGER.info("Flashing firmware to %s using %s...", port, file_path)
+            persistent_notification.async_create(
+                hass,
+                f"Starting ESP32 firmware flash on `{port}` with `{os.path.basename(file_path)}`...\n\n"
+                f"Please wait ~10 seconds while the binary is transferred.",
+                title="Flashing ESP32 Firmware",
+                notification_id=f"{DOMAIN}_flash_{entry_id}",
+            )
+
+            try:
+                # 1. Stop serial reader to release serial port
+                await client.async_stop()
+
+                # 2. Flash in executor
+                await hass.async_add_executor_job(
+                    flash_firmware_sync,
+                    port,
+                    file_path,
+                    460800,
+                    None,
+                )
+
+                # 3. Reconnect
+                await client.async_start()
+
+                persistent_notification.async_create(
+                    hass,
+                    f"Firmware flash **SUCCESSFUL**!\n\nESP32 has been rebooted and reconnected on `{port}`.",
+                    title="ESP32 Firmware Updated",
+                    notification_id=f"{DOMAIN}_flash_{entry_id}",
+                )
+            except Exception as exc:
+                try:
+                    await client.async_start()
+                except Exception:
+                    pass
+                persistent_notification.async_create(
+                    hass,
+                    f"Firmware flash **FAILED**:\n\n```\n{exc}\n```",
+                    title="ESP32 Firmware Flash Error",
+                    notification_id=f"{DOMAIN}_flash_{entry_id}",
+                )
+                raise HomeAssistantError(f"Firmware flash failed: {exc}") from exc
+
         hass.services.async_register(
             DOMAIN, "send_raw", async_send_raw_service, schema=SERVICE_SEND_RAW_SCHEMA
         )
@@ -314,6 +378,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         hass.services.async_register(
             DOMAIN, "ping", async_ping_service, schema=SERVICE_PING_SCHEMA
+        )
+        hass.services.async_register(
+            DOMAIN, "flash_firmware", async_flash_firmware_service, schema=SERVICE_FLASH_FIRMWARE_SCHEMA
         )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
