@@ -175,4 +175,14 @@ class Esp32SavedCommandButton(ButtonEntity):
             raise HomeAssistantError(
                 f"Command '{self._command_name}' no longer exists in storage"
             )
-        await self.client.async_send_raw(code)
+        if isinstance(code, dict) and "code" in code:
+            await self.client.async_send_code(
+                code=code["code"],
+                bits=code.get("bits", 24),
+                protocol=code.get("protocol", 1),
+                pulse_length=code.get("pulse_length", 350),
+            )
+        elif isinstance(code, str):
+            await self.client.async_send_raw(code)
+        elif isinstance(code, dict) and "raw" in code:
+            await self.client.async_send_raw(code["raw"])

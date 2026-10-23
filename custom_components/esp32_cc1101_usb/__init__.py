@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 import logging
+import time
 from typing import Any
 import voluptuous as vol
 
@@ -162,7 +163,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
         "store": store,
         "saved_codes": saved_codes,
-        "learning": {"active": False, "name": "", "samples": []},
+        "learning": {"active": False, "name": "", "samples": [], "decoded_samples": [], "last_sample_time": 0.0},
         "add_button_callback": None,
     }
     hass.data[DOMAIN][entry.entry_id] = entry_data
@@ -174,8 +175,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             learning = entry_data.get("learning")
             if learning and learning.get("active"):
                 raw_code = client.last_code
+                payload = data.get("payload", {})
                 if raw_code:
-                    hass.async_create_task(_handle_learning_sample(hass, entry.entry_id, raw_code))
+                    hass.async_create_task(
+                        _handle_learning_sample(hass, entry.entry_id, raw_code, payload)
+                    )
 
     client.register_listener(on_client_event)
 
@@ -237,9 +241,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "active": True,
                 "name": name,
                 "samples": [],
+                "decoded_samples": [],
+                "last_sample_time": 0.0,
                 "prev_mode": prev_mode,
             }
             await data["client"].async_set_config(rx_mode="Learn Mode")
+            _LOGGER.info("Starting RF learning mode for command '%s' (press remote button %d times)", name, LEARN_STEPS)
 
             persistent_notification.async_create(
                 hass,
@@ -256,8 +263,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             saved = data.get("saved_codes", {})
             if name not in saved:
                 raise HomeAssistantError(f"Saved RF command '{name}' not found")
+            cmd_data = saved[name]
             repeats = call.data.get("repeats")
-            await data["client"].async_send_raw(saved[name], repeats=repeats)
+            _LOGGER.info("Transmitting saved RF command '%s'", name)
+            if isinstance(cmd_data, dict) and "code" in cmd_data:
+                await data["client"].async_send_code(
+                    code=cmd_data["code"],
+                    bits=cmd_data.get("bits", 24),
+                    protocol=cmd_data.get("protocol", 1),
+                    pulse_length=cmd_data.get("pulse_length", 350),
+                    repeats=repeats,
+                )
+            elif isinstance(cmd_data, str):
+                await data["client"].async_send_raw(cmd_data, repeats=repeats)
+            elif isinstance(cmd_data, dict) and "raw" in cmd_data:
+                await data["client"].async_send_raw(cmd_data["raw"], repeats=repeats)
 
         async def async_delete_command_service(call: ServiceCall) -> None:
             _, data = _get_entry_data(hass, call.data.get("config_entry_id"))
@@ -266,6 +286,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if name in saved:
                 del saved[name]
                 await data["store"].async_save(saved)
+                _LOGGER.info("Deleted saved RF command '%s'", name)
             else:
                 raise HomeAssistantError(f"Saved RF command '{name}' not found")
 
@@ -299,7 +320,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _handle_learning_sample(hass: HomeAssistant, entry_id: str, raw_code: str) -> None:
+async def _handle_learning_sample(
+    hass: HomeAssistant, entry_id: str, raw_code: str, payload: dict[str, Any] | None = None
+) -> None:
     """Handle individual capture during multi-step learning mode."""
     entry_data = hass.data[DOMAIN].get(entry_id)
     if not entry_data:
@@ -309,9 +332,38 @@ async def _handle_learning_sample(hass: HomeAssistant, entry_id: str, raw_code: 
     if not learning or not learning.get("active"):
         return
 
+    now = time.time()
+    last_sample_time = learning.get("last_sample_time", 0.0)
+    # Require at least 0.7s between learning presses so 1 physical click only counts once
+    if (now - last_sample_time) < 0.7:
+        return
+
+    # Filter out noisy partial fragments (< 40 pulses)
+    pulse_parts = [p.strip() for p in raw_code.split(",") if p.strip()]
+    if len(pulse_parts) < 40:
+        return
+
+    learning["last_sample_time"] = now
     learning["samples"].append(raw_code)
+
+    if payload and "code" in payload and "bits" in payload:
+        learning.setdefault("decoded_samples", []).append({
+            "code": payload["code"],
+            "bits": payload["bits"],
+            "protocol": payload.get("protocol", 1),
+            "pulse_length": payload.get("pulse_length", 350),
+        })
+
     count = len(learning["samples"])
     cmd_name = learning["name"]
+
+    _LOGGER.info(
+        "Captured learning sample %d/%d for '%s' (%d pulses)",
+        count,
+        LEARN_STEPS,
+        cmd_name,
+        len(pulse_parts),
+    )
 
     if count < LEARN_STEPS:
         persistent_notification.async_create(
@@ -325,9 +377,28 @@ async def _handle_learning_sample(hass: HomeAssistant, entry_id: str, raw_code: 
         final_code = _average_rf_samples(learning["samples"])
         learning["active"] = False
         prev_mode = learning.get("prev_mode", RX_MODE_DECODED)
+        client: Esp32Cc1101Client = entry_data["client"]
         hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
-        entry_data["saved_codes"][cmd_name] = final_code
+
+        # Check if consistently decoded
+        decoded_list = learning.get("decoded_samples", [])
+        if len(decoded_list) == LEARN_STEPS:
+            first_sample = decoded_list[0]
+            entry_data["saved_codes"][cmd_name] = {
+                "type": "code",
+                "code": first_sample["code"],
+                "bits": first_sample["bits"],
+                "protocol": first_sample["protocol"],
+                "pulse_length": first_sample["pulse_length"],
+                "raw": final_code,
+            }
+            desc = f"Learned as **Decoded Protocol** (Code: `{first_sample['code']}`, {first_sample['bits']} bits)"
+        else:
+            entry_data["saved_codes"][cmd_name] = final_code
+            desc = f"Learned as **Raw Pulses** ({len(pulse_parts)} pulses)"
+
         await entry_data["store"].async_save(entry_data["saved_codes"])
+        _LOGGER.info("Saved learned RF command '%s' after %d presses (%s)", cmd_name, LEARN_STEPS, desc)
 
         if entry_data.get("add_button_callback"):
             entry_data["add_button_callback"](cmd_name)
@@ -335,7 +406,7 @@ async def _handle_learning_sample(hass: HomeAssistant, entry_id: str, raw_code: 
         persistent_notification.async_create(
             hass,
             f"Successfully learned and saved **{cmd_name}** after {LEARN_STEPS} presses!\n\n"
-            f"**Averaged Code:** `{final_code}`\n\n"
+            f"{desc}\n\n"
             f"A button entity for **{cmd_name}** has been added to your dashboard.",
             title=f"RF Code Saved: {cmd_name}",
             notification_id=f"{DOMAIN}_learning_{entry_id}",

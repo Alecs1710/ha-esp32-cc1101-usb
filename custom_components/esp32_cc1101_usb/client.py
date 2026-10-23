@@ -207,6 +207,7 @@ class Esp32Cc1101Client:
         """Called when transport is connected."""
         self.transport = transport
         self.connected = True
+        _LOGGER.info("Connected to ESP32 CC1101 on %s at %d baud", self.port, self.baudrate)
         self._notify_listeners({"type": "connection", "connected": True})
 
     def on_disconnected(self, exc: Exception | None) -> None:
@@ -267,6 +268,18 @@ class Esp32Cc1101Client:
                 elif isinstance(rxm, str) and rxm in RX_MODE_MAP:
                     self.rx_mode = rxm
 
+            _LOGGER.info(
+                "ESP32 CC1101 Online: FW=%s, Freq=%.2fMHz, Mod=%s, BW=%.1fkHz, Power=%ddBm, Squelch=%ddBm, MinRepeats=%d, Mode=%s, CC1101=%s",
+                self.version,
+                self.frequency,
+                self.modulation,
+                self.bandwidth,
+                self.tx_power,
+                self.min_rssi,
+                self.min_repeats,
+                self.rx_mode,
+                "OK" if self.chip_detected else "FAILED",
+            )
             self._notify_listeners({"type": "telemetry", "payload": payload})
             return
 
@@ -280,6 +293,17 @@ class Esp32Cc1101Client:
             raw_str = payload.get("raw", "")
             if raw_str:
                 self.last_code = raw_str
+
+            _LOGGER.info(
+                "RF Code Received: code=%s (hex=0x%X), bits=%s, proto=%s, pulse_len=%dus, rssi=%ddBm, freq=%.2fMHz",
+                self.last_decoded_code,
+                self.last_decoded_code or 0,
+                self.last_bit_length,
+                self.last_protocol,
+                self.last_pulse_length or 0,
+                self.last_rssi or 0,
+                payload.get("freq", self.frequency),
+            )
 
             self.hass.bus.async_fire(
                 EVENT_CODE_RECEIVED,
@@ -307,6 +331,13 @@ class Esp32Cc1101Client:
             self.last_bit_length = None
             self.last_pulse_length = None
 
+            _LOGGER.info(
+                "RF Raw Pulses Received: count=%s pulses, rssi=%ddBm, freq=%.2fMHz",
+                payload.get("count", len(raw_str.split(",")) if raw_str else 0),
+                self.last_rssi or 0,
+                payload.get("freq", self.frequency),
+            )
+
             self.hass.bus.async_fire(
                 EVENT_RF_RECEIVED,
                 {
@@ -323,7 +354,12 @@ class Esp32Cc1101Client:
         if event == "tx_complete" or status == "TX_OK":
             if "radio_state" in payload:
                 self.radio_state = int(payload["radio_state"])
+            _LOGGER.info("RF Transmit Complete: status=ok, radio_state=%s", self.radio_state)
             self._notify_listeners({"type": "tx_complete", "payload": payload})
+            return
+
+        if event == "error" or "error" in payload:
+            _LOGGER.warning("ESP32 CC1101 Error: %s", payload.get("message", payload))
             return
 
         _LOGGER.debug("Unhandled payload from ESP32: %s", payload)
