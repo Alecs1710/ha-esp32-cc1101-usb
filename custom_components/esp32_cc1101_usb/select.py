@@ -19,6 +19,7 @@ from .const import (
     FREQUENCY_PRESET_MAP,
     MODULATION_OPTIONS,
     PRESET_CUSTOM,
+    RX_MODE_OPTIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ async def async_setup_entry(
     entities = [
         Esp32FrequencySelect(entry, client),
         Esp32ModulationSelect(entry, client),
+        Esp32RxModeSelect(entry, client),
     ]
     async_add_entities(entities)
 
@@ -127,3 +129,46 @@ class Esp32ModulationSelect(SelectEntity):
         if option in MODULATION_OPTIONS:
             await self.client.async_set_config(mod=option)
             self.async_write_ha_state()
+
+
+class Esp32RxModeSelect(SelectEntity):
+    """Selector for RF reception filter mode (Decoded Only, All, Learn)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "RF Reception Mode"
+    _attr_options = RX_MODE_OPTIONS
+    _attr_icon = "mdi:filter-check"
+
+    def __init__(self, entry: ConfigEntry, client: Esp32Cc1101Client) -> None:
+        self.entry = entry
+        self.client = client
+        self._attr_unique_id = f"esp32_cc1101_rx_mode_{entry.entry_id}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=f"ESP32 CC1101 USB ({entry.data.get(CONF_PORT, 'USB')})",
+            manufacturer="Texas Instruments / ESP32",
+            model="CC1101 + ESP32-WROOM-32",
+            sw_version=client.version,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Register client listener."""
+        self.async_on_remove(
+            self.client.register_listener(self._handle_client_update)
+        )
+
+    def _handle_client_update(self, data: dict[str, Any]) -> None:
+        if data.get("type") in ("telemetry", "connection"):
+            self.async_write_ha_state()
+
+    @property
+    def current_option(self) -> str:
+        """Return the current reception mode."""
+        return self.client.rx_mode
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the reception mode."""
+        if option in RX_MODE_OPTIONS:
+            await self.client.async_set_config(rx_mode=option)
+            self.async_write_ha_state()
+

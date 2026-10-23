@@ -23,11 +23,17 @@ from .const import (
     CONF_BANDWIDTH,
     CONF_TX_POWER,
     CONF_REPEATS,
+    CONF_MIN_RSSI,
+    CONF_MIN_REPEATS,
+    CONF_RX_MODE,
     DEFAULT_FREQUENCY,
     DEFAULT_MODULATION,
     DEFAULT_BANDWIDTH,
     DEFAULT_TX_POWER,
     DEFAULT_REPEATS,
+    DEFAULT_MIN_RSSI,
+    DEFAULT_MIN_REPEATS,
+    RX_MODE_DECODED,
     STORAGE_KEY,
     STORAGE_VERSION,
     LEARN_STEPS,
@@ -63,6 +69,9 @@ SERVICE_SET_CONFIG_SCHEMA = vol.Schema(
         vol.Optional("modulation"): cv.string,
         vol.Optional("bandwidth"): vol.Coerce(float),
         vol.Optional("tx_power"): vol.Coerce(int),
+        vol.Optional("min_rssi"): vol.Coerce(int),
+        vol.Optional("min_repeats"): vol.Coerce(int),
+        vol.Optional("rx_mode"): cv.string,
         vol.Optional("config_entry_id"): cv.string,
     }
 )
@@ -204,7 +213,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             mod = call.data.get("modulation")
             bw = call.data.get("bandwidth")
             pa = call.data.get("tx_power")
-            await data["client"].async_set_config(freq=freq, mod=mod, bw=bw, pa=pa)
+            min_rssi = call.data.get("min_rssi")
+            min_repeats = call.data.get("min_repeats")
+            rx_mode = call.data.get("rx_mode")
+            await data["client"].async_set_config(
+                freq=freq,
+                mod=mod,
+                bw=bw,
+                pa=pa,
+                min_rssi=min_rssi,
+                min_repeats=min_repeats,
+                rx_mode=rx_mode,
+            )
 
         async def async_learn_command_service(call: ServiceCall) -> None:
             entry_id, data = _get_entry_data(hass, call.data.get("config_entry_id"))
@@ -212,11 +232,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not name:
                 raise HomeAssistantError("Command name cannot be empty")
 
+            prev_mode = data["client"].rx_mode
             data["learning"] = {
                 "active": True,
                 "name": name,
                 "samples": [],
+                "prev_mode": prev_mode,
             }
+            await data["client"].async_set_config(rx_mode="Learn Mode")
+
             persistent_notification.async_create(
                 hass,
                 f"Ready to learn **{name}**.\n\n"
@@ -300,6 +324,8 @@ async def _handle_learning_sample(hass: HomeAssistant, entry_id: str, raw_code: 
     else:
         final_code = _average_rf_samples(learning["samples"])
         learning["active"] = False
+        prev_mode = learning.get("prev_mode", RX_MODE_DECODED)
+        hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
         entry_data["saved_codes"][cmd_name] = final_code
         await entry_data["store"].async_save(entry_data["saved_codes"])
 
@@ -328,9 +354,20 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     new_bw = entry.options.get(CONF_BANDWIDTH, entry.data.get(CONF_BANDWIDTH, DEFAULT_BANDWIDTH))
     new_pa = entry.options.get(CONF_TX_POWER, entry.data.get(CONF_TX_POWER, DEFAULT_TX_POWER))
     new_repeats = entry.options.get(CONF_REPEATS, entry.data.get(CONF_REPEATS, DEFAULT_REPEATS))
+    new_min_rssi = entry.options.get(CONF_MIN_RSSI, entry.data.get(CONF_MIN_RSSI, DEFAULT_MIN_RSSI))
+    new_min_repeats = entry.options.get(CONF_MIN_REPEATS, entry.data.get(CONF_MIN_REPEATS, DEFAULT_MIN_REPEATS))
+    new_rx_mode = entry.options.get(CONF_RX_MODE, entry.data.get(CONF_RX_MODE, RX_MODE_DECODED))
 
     client.repeats = new_repeats
-    await client.async_set_config(freq=new_freq, mod=new_mod, bw=new_bw, pa=new_pa)
+    await client.async_set_config(
+        freq=new_freq,
+        mod=new_mod,
+        bw=new_bw,
+        pa=new_pa,
+        min_rssi=new_min_rssi,
+        min_repeats=new_min_repeats,
+        rx_mode=new_rx_mode,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -10,15 +10,43 @@ CONF_MODULATION = "modulation"
 CONF_BANDWIDTH = "bandwidth"
 CONF_TX_POWER = "tx_power"
 CONF_REPEATS = "repeats"
+CONF_MIN_RSSI = "min_rssi"
+CONF_MIN_REPEATS = "min_repeats"
+CONF_RX_MODE = "rx_mode"
 
 # Defaults
 DEFAULT_PORT = "/dev/ttyUSB0"
-DEFAULT_BAUDRATE = 115200
+DEFAULT_BAUDRATE = 460800
 DEFAULT_FREQUENCY = 433.92
 DEFAULT_MODULATION = "ASK/OOK"
 DEFAULT_BANDWIDTH = 325.0
 DEFAULT_TX_POWER = 10
 DEFAULT_REPEATS = 6
+DEFAULT_MIN_RSSI = -75
+DEFAULT_MIN_REPEATS = 1
+
+# Reception Modes
+RX_MODE_DECODED = "Decoded Only (Clean)"
+RX_MODE_ALL = "All (Decoded + Raw)"
+RX_MODE_LEARN = "Learn Mode"
+
+RX_MODE_OPTIONS = [
+    RX_MODE_DECODED,
+    RX_MODE_ALL,
+    RX_MODE_LEARN,
+]
+
+RX_MODE_MAP = {
+    RX_MODE_DECODED: 0,
+    RX_MODE_ALL: 1,
+    RX_MODE_LEARN: 2,
+}
+
+RX_MODE_REV_MAP = {
+    0: RX_MODE_DECODED,
+    1: RX_MODE_ALL,
+    2: RX_MODE_LEARN,
+}
 
 # Supported Frequency Presets
 PRESET_433 = "433.92 MHz (Standard EU/Global)"

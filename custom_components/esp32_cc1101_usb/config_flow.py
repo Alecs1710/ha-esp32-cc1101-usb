@@ -30,6 +30,9 @@ from .const import (
     CONF_BANDWIDTH,
     CONF_TX_POWER,
     CONF_REPEATS,
+    CONF_MIN_RSSI,
+    CONF_MIN_REPEATS,
+    CONF_RX_MODE,
     DEFAULT_PORT,
     DEFAULT_BAUDRATE,
     DEFAULT_FREQUENCY,
@@ -37,10 +40,14 @@ from .const import (
     DEFAULT_BANDWIDTH,
     DEFAULT_TX_POWER,
     DEFAULT_REPEATS,
+    DEFAULT_MIN_RSSI,
+    DEFAULT_MIN_REPEATS,
     FREQUENCY_PRESETS,
     FREQUENCY_PRESET_MAP,
     MODULATION_OPTIONS,
     PRESET_CUSTOM,
+    RX_MODE_DECODED,
+    RX_MODE_OPTIONS,
 )
 
 
@@ -143,7 +150,7 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 ),
                 vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
-                    [9600, 57600, 115200, 230400, 460800]
+                    [9600, 57600, 115200, 230400, 460800, 921600]
                 ),
                 vol.Required("freq_preset", default=FREQUENCY_PRESETS[0]): SelectSelector(
                     SelectSelectorConfig(
@@ -211,7 +218,7 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
-                    [9600, 57600, 115200, 230400, 460800]
+                    [9600, 57600, 115200, 230400, 460800, 921600]
                 ),
                 vol.Required("freq_preset", default=FREQUENCY_PRESETS[0]): SelectSelector(
                     SelectSelectorConfig(
@@ -285,6 +292,18 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             CONF_REPEATS,
             self.config_entry.data.get(CONF_REPEATS, DEFAULT_REPEATS),
         )
+        cur_min_rssi = self.config_entry.options.get(
+            CONF_MIN_RSSI,
+            self.config_entry.data.get(CONF_MIN_RSSI, DEFAULT_MIN_RSSI),
+        )
+        cur_min_repeats = self.config_entry.options.get(
+            CONF_MIN_REPEATS,
+            self.config_entry.data.get(CONF_MIN_REPEATS, DEFAULT_MIN_REPEATS),
+        )
+        cur_rx_mode = self.config_entry.options.get(
+            CONF_RX_MODE,
+            self.config_entry.data.get(CONF_RX_MODE, RX_MODE_DECODED),
+        )
 
         # Detect matching preset or select Custom
         cur_preset = PRESET_CUSTOM
@@ -298,6 +317,9 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         ]
         mod_options = [
             SelectOptionDict(value=m, label=m) for m in MODULATION_OPTIONS
+        ]
+        rx_mode_options = [
+            SelectOptionDict(value=r, label=r) for r in RX_MODE_OPTIONS
         ]
 
         schema = vol.Schema(
@@ -347,6 +369,29 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                         max=25,
                         step=1,
                         mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(CONF_MIN_RSSI, default=cur_min_rssi): NumberSelector(
+                    NumberSelectorConfig(
+                        min=-95,
+                        max=-40,
+                        step=1,
+                        unit_of_measurement="dBm",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Required(CONF_MIN_REPEATS, default=cur_min_repeats): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=5,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(CONF_RX_MODE, default=cur_rx_mode): SelectSelector(
+                    SelectSelectorConfig(
+                        options=rx_mode_options,
+                        mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
             }

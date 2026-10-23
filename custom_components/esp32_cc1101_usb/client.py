@@ -19,16 +19,24 @@ from .const import (
     CONF_BANDWIDTH,
     CONF_TX_POWER,
     CONF_REPEATS,
+    CONF_MIN_RSSI,
+    CONF_MIN_REPEATS,
+    CONF_RX_MODE,
     DEFAULT_FREQUENCY,
     DEFAULT_MODULATION,
     DEFAULT_BANDWIDTH,
     DEFAULT_TX_POWER,
     DEFAULT_REPEATS,
+    DEFAULT_MIN_RSSI,
+    DEFAULT_MIN_REPEATS,
     EVENT_RF_RECEIVED,
     EVENT_CODE_RECEIVED,
     MODULATION_NAME_TO_CODE,
     MODULATION_CODE_TO_NAME,
     MODULATION_OOK,
+    RX_MODE_DECODED,
+    RX_MODE_MAP,
+    RX_MODE_REV_MAP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,6 +99,15 @@ class Esp32Cc1101Client:
         )
         self.repeats: int = entry.options.get(
             CONF_REPEATS, entry.data.get(CONF_REPEATS, DEFAULT_REPEATS)
+        )
+        self.min_rssi: int = entry.options.get(
+            CONF_MIN_RSSI, entry.data.get(CONF_MIN_RSSI, DEFAULT_MIN_RSSI)
+        )
+        self.min_repeats: int = entry.options.get(
+            CONF_MIN_REPEATS, entry.data.get(CONF_MIN_REPEATS, DEFAULT_MIN_REPEATS)
+        )
+        self.rx_mode: str = entry.options.get(
+            CONF_RX_MODE, entry.data.get(CONF_RX_MODE, RX_MODE_DECODED)
         )
         self.radio_state: int = 0
         self.rssi: int | None = None
@@ -156,6 +173,9 @@ class Esp32Cc1101Client:
                 mod=self.modulation,
                 bw=self.bandwidth,
                 pa=self.tx_power,
+                min_rssi=self.min_rssi,
+                min_repeats=self.min_repeats,
+                rx_mode=self.rx_mode,
             )
             await self.async_query_status()
             return True
@@ -236,6 +256,16 @@ class Esp32Cc1101Client:
                 self.chip_detected = bool(payload["chip_detected"])
             if "rssi" in payload:
                 self.rssi = int(payload["rssi"])
+            if "min_rssi" in payload:
+                self.min_rssi = int(payload["min_rssi"])
+            if "min_repeats" in payload:
+                self.min_repeats = int(payload["min_repeats"])
+            if "rx_mode" in payload:
+                rxm = payload["rx_mode"]
+                if isinstance(rxm, int) or (isinstance(rxm, str) and str(rxm).isdigit()):
+                    self.rx_mode = RX_MODE_REV_MAP.get(int(rxm), RX_MODE_DECODED)
+                elif isinstance(rxm, str) and rxm in RX_MODE_MAP:
+                    self.rx_mode = rxm
 
             self._notify_listeners({"type": "telemetry", "payload": payload})
             return
@@ -361,8 +391,11 @@ class Esp32Cc1101Client:
         mod: str | int | None = None,
         bw: float | None = None,
         pa: int | None = None,
+        min_rssi: int | None = None,
+        min_repeats: int | None = None,
+        rx_mode: str | int | None = None,
     ) -> None:
-        """Update CC1101 radio frequency, modulation, bandwidth, and power."""
+        """Update CC1101 radio frequency, modulation, bandwidth, power, squelch, and rx mode."""
         cmd: dict[str, Any] = {"cmd": "set_config"}
         if freq is not None:
             self.frequency = float(freq)
@@ -380,6 +413,19 @@ class Esp32Cc1101Client:
         if pa is not None:
             self.tx_power = int(pa)
             cmd["pa"] = self.tx_power
+        if min_rssi is not None:
+            self.min_rssi = int(min_rssi)
+            cmd["min_rssi"] = self.min_rssi
+        if min_repeats is not None:
+            self.min_repeats = max(1, int(min_repeats))
+            cmd["min_repeats"] = self.min_repeats
+        if rx_mode is not None:
+            if isinstance(rx_mode, str):
+                self.rx_mode = rx_mode
+                cmd["rx_mode"] = RX_MODE_MAP.get(rx_mode, 0)
+            else:
+                cmd["rx_mode"] = int(rx_mode)
+                self.rx_mode = RX_MODE_REV_MAP.get(int(rx_mode), RX_MODE_DECODED)
 
         self._write_line(json.dumps(cmd))
         _LOGGER.info("Sent radio configuration to ESP32: %s", cmd)

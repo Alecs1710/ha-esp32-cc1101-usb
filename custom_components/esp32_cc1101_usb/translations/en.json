@@ -39,8 +39,26 @@
           "modulation": "Modulation Mode",
           "bandwidth": "Filter Bandwidth (kHz)",
           "tx_power": "Transmit Power (dBm)",
-          "repeats": "Default Transmit Repeats"
+          "repeats": "Default Transmit Repeats",
+          "min_rssi": "Receiver Sensitivity (Squelch dBm)",
+          "min_repeats": "Minimum Consecutive Repeats",
+          "rx_mode": "RF Reception Mode"
         }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "squelch": {
+        "name": "Receiver Sensitivity (Squelch)"
+      },
+      "min_repeats": {
+        "name": "Minimum Repeats Filter"
+      }
+    },
+    "select": {
+      "rx_mode": {
+        "name": "RF Reception Mode"
       }
     }
   }

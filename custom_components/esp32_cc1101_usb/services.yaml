@@ -153,6 +153,38 @@ set_config:
           max: 10
           unit_of_measurement: "dBm"
           mode: slider
+    min_rssi:
+      name: Receiver Sensitivity (Squelch)
+      description: Minimum RSSI threshold in dBm to accept raw pulses (e.g. -75 dBm).
+      required: false
+      example: -75
+      selector:
+        number:
+          min: -95
+          max: -40
+          unit_of_measurement: "dBm"
+          mode: slider
+    min_repeats:
+      name: Minimum Repeats
+      description: Number of identical consecutive repetitions required for raw signal verification.
+      required: false
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+    rx_mode:
+      name: Reception Mode
+      description: RF reception filtering mode (Decoded Only, All, Learn Mode).
+      required: false
+      example: "Decoded Only (Clean)"
+      selector:
+        select:
+          options:
+            - "Decoded Only (Clean)"
+            - "All (Decoded + Raw)"
+            - "Learn Mode"
     config_entry_id:
       name: Target Device
       description: Optional target config entry ID.
