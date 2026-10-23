@@ -44,8 +44,8 @@ from .const import (
     DEFAULT_MIN_REPEATS,
     FREQUENCY_PRESETS,
     FREQUENCY_PRESET_MAP,
+    get_preset_for_freq,
     MODULATION_OPTIONS,
-    PRESET_CUSTOM,
     RX_MODE_DECODED,
     RX_MODE_OPTIONS,
 )
@@ -115,11 +115,8 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(port)
             self._abort_if_unique_id_configured()
 
-            preset = user_input.get("freq_preset", FREQUENCY_PRESETS[0])
-            if preset in FREQUENCY_PRESET_MAP:
-                user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP[preset]
-            elif CONF_FREQUENCY not in user_input:
-                user_input[CONF_FREQUENCY] = DEFAULT_FREQUENCY
+            freq_choice = user_input.get(CONF_FREQUENCY, FREQUENCY_PRESETS[0])
+            user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP.get(freq_choice, DEFAULT_FREQUENCY)
 
             user_input[CONF_MODULATION] = user_input.get(
                 CONF_MODULATION, DEFAULT_MODULATION
@@ -136,7 +133,7 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         port_options = await self.hass.async_add_executor_job(_get_serial_ports)
         default_port = port_options[0]["value"]
 
-        preset_options = [
+        freq_options = [
             SelectOptionDict(value=p, label=p) for p in FREQUENCY_PRESETS
         ]
 
@@ -152,9 +149,9 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
                     [9600, 57600, 115200, 230400, 460800, 921600]
                 ),
-                vol.Required("freq_preset", default=FREQUENCY_PRESETS[0]): SelectSelector(
+                vol.Required(CONF_FREQUENCY, default=FREQUENCY_PRESETS[0]): SelectSelector(
                     SelectSelectorConfig(
-                        options=preset_options,
+                        options=freq_options,
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -178,31 +175,27 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_usb(self, discovery_info: usb.UsbServiceInfo) -> FlowResult:
         """Handle USB plug-and-play discovery."""
-        device = discovery_info.device
-        await self.async_set_unique_id(device)
+        dev_path = discovery_info.device
+        await self.async_set_unique_id(dev_path)
         self._abort_if_unique_id_configured()
 
-        self._discovered_device = device
-        self._discovered_description = discovery_info.description or "ESP32 CC1101 USB"
-        self.context["title_placeholders"] = {"name": self._discovered_description}
+        self._discovered_device = dev_path
+        self._discovered_description = discovery_info.description or "ESP32 CC1101 USB RF"
 
-        return await self.async_step_usb_confirm()
+        self.context["title_placeholders"] = {
+            "name": f"{self._discovered_description} ({dev_path})"
+        }
+        return await self.async_step_discovery_confirm()
 
-    async def async_step_usb_confirm(
+    async def async_step_discovery_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Confirm setup of discovered USB transceiver."""
+        """Confirm USB discovered device setup."""
         if user_input is not None:
+            freq_choice = user_input.get(CONF_FREQUENCY, FREQUENCY_PRESETS[0])
+            user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP.get(freq_choice, DEFAULT_FREQUENCY)
             user_input[CONF_PORT] = self._discovered_device
-            preset = user_input.get("freq_preset", FREQUENCY_PRESETS[0])
-            if preset in FREQUENCY_PRESET_MAP:
-                user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP[preset]
-            elif CONF_FREQUENCY not in user_input:
-                user_input[CONF_FREQUENCY] = DEFAULT_FREQUENCY
-
-            user_input[CONF_MODULATION] = user_input.get(
-                CONF_MODULATION, DEFAULT_MODULATION
-            )
+            user_input[CONF_BAUDRATE] = DEFAULT_BAUDRATE
             user_input[CONF_BANDWIDTH] = DEFAULT_BANDWIDTH
             user_input[CONF_TX_POWER] = DEFAULT_TX_POWER
             user_input[CONF_REPEATS] = DEFAULT_REPEATS
@@ -212,17 +205,15 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data=user_input,
             )
 
-        preset_options = [
+        freq_options = [
             SelectOptionDict(value=p, label=p) for p in FREQUENCY_PRESETS
         ]
+
         schema = vol.Schema(
             {
-                vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
-                    [9600, 57600, 115200, 230400, 460800, 921600]
-                ),
-                vol.Required("freq_preset", default=FREQUENCY_PRESETS[0]): SelectSelector(
+                vol.Required(CONF_FREQUENCY, default=FREQUENCY_PRESETS[0]): SelectSelector(
                     SelectSelectorConfig(
-                        options=preset_options,
+                        options=freq_options,
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -241,9 +232,12 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
         return self.async_show_form(
-            step_id="usb_confirm",
+            step_id="discovery_confirm",
             data_schema=schema,
-            description_placeholders={"device": self._discovered_device or "USB"},
+            description_placeholders={
+                "device": self._discovered_device or "Unknown",
+                "description": self._discovered_description or "ESP32 CC1101",
+            },
         )
 
     @staticmethod
@@ -252,31 +246,20 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
-        return Esp32Cc1101OptionsFlow(config_entry)
+        return Esp32Cc1101OptionsFlow()
 
 
 class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for live tuning of frequency, power, and modulation."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the ESP32 CC1101 options."""
         if user_input is not None:
-            preset = user_input.get("freq_preset")
-            entered_freq = user_input.get(CONF_FREQUENCY)
-            cur_freq_opt = self.config_entry.options.get(
-                CONF_FREQUENCY,
-                self.config_entry.data.get(CONF_FREQUENCY, DEFAULT_FREQUENCY),
-            )
-            # If the user modified the numeric frequency box, prioritize the custom frequency
-            if entered_freq is not None and abs(float(entered_freq) - float(cur_freq_opt)) > 0.001:
-                user_input[CONF_FREQUENCY] = float(entered_freq)
-            elif preset and preset in FREQUENCY_PRESET_MAP:
-                user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP[preset]
+            freq_choice = user_input.get(CONF_FREQUENCY)
+            if freq_choice in FREQUENCY_PRESET_MAP:
+                user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP[freq_choice]
 
             return self.async_create_entry(title="", data=user_input)
 
@@ -284,6 +267,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             CONF_FREQUENCY,
             self.config_entry.data.get(CONF_FREQUENCY, DEFAULT_FREQUENCY),
         )
+        cur_preset = get_preset_for_freq(float(cur_freq))
+
         cur_mod = self.config_entry.options.get(
             CONF_MODULATION,
             self.config_entry.data.get(CONF_MODULATION, DEFAULT_MODULATION),
@@ -313,14 +298,7 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             self.config_entry.data.get(CONF_RX_MODE, RX_MODE_DECODED),
         )
 
-        # Detect matching preset or select Custom
-        cur_preset = PRESET_CUSTOM
-        for preset_name, preset_val in FREQUENCY_PRESET_MAP.items():
-            if abs(preset_val - cur_freq) < 0.05:
-                cur_preset = preset_name
-                break
-
-        preset_options = [
+        freq_options = [
             SelectOptionDict(value=p, label=p) for p in FREQUENCY_PRESETS
         ]
         mod_options = [
@@ -332,19 +310,10 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                vol.Required("freq_preset", default=cur_preset): SelectSelector(
+                vol.Required(CONF_FREQUENCY, default=cur_preset): SelectSelector(
                     SelectSelectorConfig(
-                        options=preset_options,
+                        options=freq_options,
                         mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(CONF_FREQUENCY, default=cur_freq): NumberSelector(
-                    NumberSelectorConfig(
-                        min=300.0,
-                        max=928.0,
-                        step=0.01,
-                        unit_of_measurement="MHz",
-                        mode=NumberSelectorMode.BOX,
                     )
                 ),
                 vol.Required(CONF_MODULATION, default=cur_mod): SelectSelector(

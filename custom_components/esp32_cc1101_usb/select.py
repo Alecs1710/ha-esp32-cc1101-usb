@@ -17,6 +17,7 @@ from .const import (
     DOMAIN,
     FREQUENCY_PRESETS,
     FREQUENCY_PRESET_MAP,
+    get_preset_for_freq,
     MODULATION_OPTIONS,
     PRESET_CUSTOM,
     RX_MODE_OPTIONS,
@@ -43,10 +44,10 @@ async def async_setup_entry(
 
 
 class Esp32FrequencySelect(SelectEntity):
-    """Selector for radio frequency presets."""
+    """Selector for radio frequency."""
 
     _attr_has_entity_name = True
-    _attr_name = "Frequency Preset"
+    _attr_name = "Frequency"
     _attr_options = FREQUENCY_PRESETS
     _attr_icon = "mdi:sine-wave"
 
@@ -75,11 +76,7 @@ class Esp32FrequencySelect(SelectEntity):
     @property
     def current_option(self) -> str:
         """Return the current selected frequency preset."""
-        cur = self.client.frequency
-        for name, val in FREQUENCY_PRESET_MAP.items():
-            if abs(val - cur) < 0.05:
-                return name
-        return PRESET_CUSTOM
+        return get_preset_for_freq(self.client.frequency)
 
     async def async_select_option(self, option: str) -> None:
         """Change the radio frequency preset."""

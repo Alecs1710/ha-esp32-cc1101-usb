@@ -383,6 +383,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN, "flash_firmware", async_flash_firmware_service, schema=SERVICE_FLASH_FIRMWARE_SCHEMA
         )
 
+    # Automatically purge obsolete entities from previous versions to clean up UI
+    from homeassistant.helpers import entity_registry as er
+    ent_reg = er.async_get(hass)
+    existing_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+    obsolete_keys = ("_ping_", "_reset_", "_flash_", "_frequency_")
+    for reg_entry in existing_entries:
+        if any(k in reg_entry.unique_id for k in obsolete_keys):
+            _LOGGER.info("Purging obsolete entity from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
+            ent_reg.async_remove(reg_entry.entity_id)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

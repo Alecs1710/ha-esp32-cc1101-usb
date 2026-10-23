@@ -48,19 +48,23 @@ RX_MODE_REV_MAP = {
     2: RX_MODE_LEARN,
 }
 
-# Supported Frequency Presets
-PRESET_433 = "433.92 MHz (Standard EU/Global)"
-PRESET_315 = "315.00 MHz (US/Asia Remotes)"
-PRESET_868 = "868.35 MHz (EU ISM/Alarms)"
-PRESET_915 = "915.00 MHz (US ISM)"
-PRESET_CUSTOM = "Custom"
+# Frequency presets with available hardware frequency bands
+PRESET_433 = "433.92 MHz (Band: 387.0 - 464.0 MHz)"
+PRESET_315 = "315.00 MHz (Band: 300.0 - 348.0 MHz)"
+PRESET_868 = "868.35 MHz (Band: 779.0 - 900.0 MHz)"
+PRESET_915 = "915.00 MHz (Band: 902.0 - 928.0 MHz)"
+PRESET_433_SOMFY = "433.42 MHz (Band: 387.0 - 464.0 MHz)"
+PRESET_434 = "434.42 MHz (Band: 387.0 - 464.0 MHz)"
+PRESET_868_MBUS = "868.95 MHz (Band: 779.0 - 900.0 MHz)"
 
 FREQUENCY_PRESETS = [
     PRESET_433,
     PRESET_315,
     PRESET_868,
     PRESET_915,
-    PRESET_CUSTOM,
+    PRESET_433_SOMFY,
+    PRESET_434,
+    PRESET_868_MBUS,
 ]
 
 FREQUENCY_PRESET_MAP = {
@@ -68,7 +72,22 @@ FREQUENCY_PRESET_MAP = {
     PRESET_315: 315.00,
     PRESET_868: 868.35,
     PRESET_915: 915.00,
+    PRESET_433_SOMFY: 433.42,
+    PRESET_434: 434.42,
+    PRESET_868_MBUS: 868.95,
 }
+
+
+PRESET_CUSTOM = "Custom Frequency"
+
+
+def get_preset_for_freq(freq: float) -> str:
+    """Return the closest matching preset for a numeric frequency."""
+    for name, val in FREQUENCY_PRESET_MAP.items():
+        if abs(val - freq) < 0.05:
+            return name
+    return PRESET_433
+
 
 # Modulations
 MODULATION_OOK = "ASK/OOK"
