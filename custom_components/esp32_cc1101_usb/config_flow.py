@@ -8,6 +8,7 @@ import serial.tools.list_ports
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components import usb
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
@@ -91,6 +92,11 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        """Initialize config flow."""
+        self._discovered_device: str | None = None
+        self._discovered_description: str | None = None
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -161,6 +167,76 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=schema, errors=errors
+        )
+
+    async def async_step_usb(self, discovery_info: usb.UsbServiceInfo) -> FlowResult:
+        """Handle USB plug-and-play discovery."""
+        device = discovery_info.device
+        await self.async_set_unique_id(device)
+        self._abort_if_unique_id_configured()
+
+        self._discovered_device = device
+        self._discovered_description = discovery_info.description or "ESP32 CC1101 USB"
+        self.context["title_placeholders"] = {"name": self._discovered_description}
+
+        return await self.async_step_usb_confirm()
+
+    async def async_step_usb_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm setup of discovered USB transceiver."""
+        if user_input is not None:
+            user_input[CONF_PORT] = self._discovered_device
+            preset = user_input.get("freq_preset", FREQUENCY_PRESETS[0])
+            if preset in FREQUENCY_PRESET_MAP:
+                user_input[CONF_FREQUENCY] = FREQUENCY_PRESET_MAP[preset]
+            elif CONF_FREQUENCY not in user_input:
+                user_input[CONF_FREQUENCY] = DEFAULT_FREQUENCY
+
+            user_input[CONF_MODULATION] = user_input.get(
+                CONF_MODULATION, DEFAULT_MODULATION
+            )
+            user_input[CONF_BANDWIDTH] = DEFAULT_BANDWIDTH
+            user_input[CONF_TX_POWER] = DEFAULT_TX_POWER
+            user_input[CONF_REPEATS] = DEFAULT_REPEATS
+
+            return self.async_create_entry(
+                title=f"ESP32 CC1101 ({self._discovered_device})",
+                data=user_input,
+            )
+
+        preset_options = [
+            SelectOptionDict(value=p, label=p) for p in FREQUENCY_PRESETS
+        ]
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
+                    [9600, 57600, 115200, 230400, 460800]
+                ),
+                vol.Required("freq_preset", default=FREQUENCY_PRESETS[0]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=preset_options,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_MODULATION, default=DEFAULT_MODULATION
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=m, label=m)
+                            for m in MODULATION_OPTIONS
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="usb_confirm",
+            data_schema=schema,
+            description_placeholders={"device": self._discovered_device or "USB"},
         )
 
     @staticmethod

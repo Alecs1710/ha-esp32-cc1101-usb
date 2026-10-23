@@ -12,7 +12,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfFrequency, UnitOfSignalStrength
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -108,7 +107,7 @@ class Esp32RssiSensor(SensorEntity):
     _attr_name = "Signal RSSI"
     _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfSignalStrength.DECIBELS_MILLIWATT
+    _attr_native_unit_of_measurement = "dBm"
 
     def __init__(self, entry: ConfigEntry, client: Esp32Cc1101Client) -> None:
         self.entry = entry
@@ -143,7 +142,7 @@ class Esp32ActiveFrequencySensor(SensorEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Active Frequency"
-    _attr_native_unit_of_measurement = UnitOfFrequency.MEGAHERTZ
+    _attr_native_unit_of_measurement = "MHz"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:sine-wave"
 

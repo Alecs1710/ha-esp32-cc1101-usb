@@ -6,6 +6,28 @@
   "documentation": "https://github.com/Alecs1710/ha-esp32-cc1101-usb",
   "issue_tracker": "https://github.com/Alecs1710/ha-esp32-cc1101-usb/issues",
   "requirements": ["serialx>=0.4.0", "pyserial>=3.5"],
-  "version": "2.0.0",
-  "iot_class": "local_push"
+  "version": "2.2.0",
+  "iot_class": "local_push",
+  "usb": [
+    {
+      "vid": "10C4",
+      "pid": "EA60",
+      "description": "*CP210*"
+    },
+    {
+      "vid": "1A86",
+      "pid": "7523",
+      "description": "*CH340*"
+    },
+    {
+      "vid": "0403",
+      "pid": "6001",
+      "description": "*FT232*"
+    },
+    {
+      "vid": "303A",
+      "pid": "1001",
+      "description": "*ESP32*"
+    }
+  ]
 }
