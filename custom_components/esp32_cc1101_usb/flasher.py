@@ -26,7 +26,7 @@ def flash_firmware_sync(
     """Flash firmware binary to ESP32 using esptool in a synchronous call.
     
     Must be executed in an executor thread.
-    Logs at WARNING level so output is immediately visible in Home Assistant UI Logs.
+    Uses modern esptool v5 syntax with multi-baud and no-stub fallbacks.
     """
     if not firmware_path or not os.path.isfile(firmware_path):
         firmware_path = get_default_firmware_path()
@@ -45,13 +45,19 @@ def flash_firmware_sync(
     if progress_callback:
         progress_callback("Connecting to ESP32 bootloader...")
 
-    bauds_to_try = [baud]
-    if baud != 115200:
-        bauds_to_try.append(115200)
+    attempts = [
+        {"baud": baud, "no_stub": False, "desc": f"{baud} baud with stub"},
+        {"baud": 115200, "no_stub": False, "desc": "115200 baud with stub"},
+        {"baud": 115200, "no_stub": True, "desc": "115200 baud direct ROM (no-stub)"},
+    ]
 
     last_error: Exception | None = None
 
-    for attempt_baud in bauds_to_try:
+    for attempt in attempts:
+        attempt_baud = attempt["baud"]
+        use_no_stub = attempt["no_stub"]
+        desc = attempt["desc"]
+
         cmd = [
             sys.executable,
             "-m",
@@ -64,28 +70,34 @@ def flash_firmware_sync(
             str(attempt_baud),
             "--connect-attempts",
             "4",
+        ]
+
+        if use_no_stub:
+            cmd.append("--no-stub")
+
+        cmd.extend([
             "--before",
-            "default_reset",
+            "default-reset",
             "--after",
-            "hard_reset",
-            "write_flash",
+            "hard-reset",
+            "write-flash",
             "-z",
-            "--flash_mode",
-            "dio",
-            "--flash_freq",
+            "--flash-mode",
+            "keep",
+            "--flash-freq",
             "40m",
             "0x10000",
             firmware_path,
-        ]
+        ])
 
         try:
             _LOGGER.warning(
-                "[ESP32 CC1101 Flash] Attempting esptool on %s at %d baud (timeout 35s)...",
+                "[ESP32 CC1101 Flash] Attempting esptool on %s (%s, timeout 35s)...",
                 port,
-                attempt_baud,
+                desc,
             )
             if progress_callback:
-                progress_callback(f"Connecting to ESP32 on {port} at {attempt_baud} baud...")
+                progress_callback(f"Connecting to ESP32 ({desc})...")
 
             proc = subprocess.Popen(
                 cmd,
@@ -95,87 +107,52 @@ def flash_firmware_sync(
                 bufsize=1,
             )
 
-            collected_output = []
+            stdout_data, _ = proc.communicate(timeout=35)
+            output = stdout_data or ""
+
+            for raw_line in output.splitlines():
+                line = raw_line.strip()
+                if line:
+                    _LOGGER.warning("[ESP32 CC1101 Flash] %s", line)
+                    if progress_callback and any(
+                        tag in line for tag in ("Writing at", "Connecting", "Chip is", "Erasing", "Hash of", "%")
+                    ):
+                        progress_callback(line)
+
+            if proc.returncode == 0:
+                _LOGGER.warning("[ESP32 CC1101 Flash] Flash succeeded (%s)! ESP32 rebooted.", desc)
+                if progress_callback:
+                    progress_callback("Flash complete! ESP32 rebooted.")
+                return output
+            else:
+                err_msg = f"esptool failed (exit code {proc.returncode}) with {desc}"
+                _LOGGER.warning("[ESP32 CC1101 Flash] %s", err_msg)
+                last_error = RuntimeError(f"{err_msg}\n{output}")
+
+        except subprocess.TimeoutExpired:
             try:
-                stdout_data, _ = proc.communicate(timeout=35)
-                output = stdout_data or ""
-                collected_output.append(output)
-
-                for raw_line in output.splitlines():
-                    line = raw_line.strip()
-                    if line:
-                        _LOGGER.warning("[ESP32 CC1101 Flash] %s", line)
-                        if progress_callback and any(
-                            tag in line for tag in ("Writing at", "Connecting", "Chip is", "Erasing", "Hash of")
-                        ):
-                            progress_callback(line)
-
-                if proc.returncode == 0:
-                    _LOGGER.warning("[ESP32 CC1101 Flash] Flash succeeded at %d baud! ESP32 rebooted.", attempt_baud)
-                    if progress_callback:
-                        progress_callback("Flash complete! ESP32 rebooted.")
-                    return output
-                else:
-                    err_msg = f"esptool returned non-zero code {proc.returncode} at {attempt_baud} baud"
-                    _LOGGER.warning("[ESP32 CC1101 Flash] %s", err_msg)
-                    last_error = RuntimeError(f"{err_msg}\n{output}")
-
-            except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.communicate()
-                err_msg = f"esptool timed out after 35s at {attempt_baud} baud (waiting for bootloader sync)"
-                _LOGGER.warning("[ESP32 CC1101 Flash] %s", err_msg)
-                last_error = TimeoutError(err_msg)
+            except Exception:
+                pass
+            err_msg = f"esptool timed out after 35s with {desc}"
+            _LOGGER.warning("[ESP32 CC1101 Flash] %s", err_msg)
+            last_error = TimeoutError(err_msg)
 
         except Exception as exc:
-            _LOGGER.warning("[ESP32 CC1101 Flash] Subprocess execution error at %d baud: %s", attempt_baud, exc)
+            _LOGGER.warning("[ESP32 CC1101 Flash] Execution error with %s: %s", desc, exc)
             last_error = exc
 
-    # Final fallback: direct Python module call
-    _LOGGER.warning("[ESP32 CC1101 Flash] Attempting direct in-process esptool module call...")
-    if progress_callback:
-        progress_callback("Attempting direct in-process esptool call...")
-    try:
-        import esptool
-
-        esptool_args = [
-            "--chip",
-            "esp32",
-            "--port",
-            port,
-            "--baud",
-            "115200",
-            "--connect-attempts",
-            "4",
-            "--before",
-            "default_reset",
-            "--after",
-            "hard_reset",
-            "write_flash",
-            "-z",
-            "--flash_mode",
-            "dio",
-            "--flash_freq",
-            "40m",
-            "0x10000",
-            firmware_path,
-        ]
-        try:
-            esptool.main(esptool_args)
-        except SystemExit as sys_exit:
-            if sys_exit.code != 0:
-                raise RuntimeError(f"esptool module exited with code {sys_exit.code}") from sys_exit
-        _LOGGER.warning("[ESP32 CC1101 Flash] Direct esptool module flash successful.")
-        if progress_callback:
-            progress_callback("Flash complete via module! ESP32 rebooted.")
-        return "ESP32 firmware flashed via internal module successfully."
-    except Exception as inner_exc:
-        _LOGGER.error("[ESP32 CC1101 Flash] Direct esptool call failed: %s", inner_exc)
-        explanation = (
-            f"Firmware flash failed to enter bootloader on port '{port}'.\n\n"
-            "CAUSE: In VM USB passthrough environments (TrueNAS, Proxmox, ESXi), "
-            "the host USB controller delays/batches DTR/RTS signals, so the ESP32 doesn't reset into ROM bootloader automatically.\n\n"
-            "SOLUTION: Click 'Install' on the Firmware card again, and IMMEDIATELY press and hold "
-            "the physical 'BOOT' (IO0) button on the ESP32 board for 2 seconds until the flashing starts."
-        )
-        raise RuntimeError(f"{explanation}\n(Error details: {last_error or inner_exc})") from inner_exc
+    # If all attempts failed
+    explanation = (
+        f"Firmware flash failed on port '{port}'.\n\n"
+        "POSSIBLE CAUSES & SOLUTIONS:\n"
+        "1. DO NOT HOLD THE BOOT BUTTON CONTINUOUSLY: Press and hold BOOT, click 'Install', "
+        "and as soon as you see 'Connecting...' (1-2 seconds), IMMEDIATELY RELEASE the BOOT button. "
+        "Holding it permanently during the write corrupts the SPI flash communication.\n"
+        "2. CC1101 PIN 5 INTERFERENCE: The CC1101 CSN pin is wired to GPIO 5, which is an ESP32 strapping pin. "
+        "If flash communication continues to fail, temporarily disconnect the CSN wire (or unplug CC1101 VCC) "
+        "during the flash process, then reconnect it once updated."
+    )
+    _LOGGER.error("[ESP32 CC1101 Flash] %s", explanation)
+    raise RuntimeError(f"{explanation}\n\n(Error details: {last_error})") from last_error
