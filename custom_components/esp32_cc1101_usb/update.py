@@ -6,6 +6,7 @@ import logging
 import os
 from typing import Any
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -20,6 +21,7 @@ from .flasher import flash_firmware_sync, get_default_firmware_path
 _LOGGER = logging.getLogger(__name__)
 
 TARGET_FW_VERSION = "3.6.0"
+NOTIFICATION_ID = "esp32_cc1101_firmware_update"
 
 
 async def async_setup_entry(
@@ -85,17 +87,41 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
         if not os.path.isfile(firmware_path):
             raise HomeAssistantError(f"Firmware binary not found at '{firmware_path}'")
 
-        _LOGGER.info("Starting firmware flash to %s...", port)
+        _LOGGER.warning("[ESP32 CC1101] Starting firmware flash to %s...", port)
         self._attr_in_progress = True
         self.async_write_ha_state()
 
+        persistent_notification.async_create(
+            self.hass,
+            f"Starting firmware update on port `{port}`...\n\n"
+            "⏳ *Connecting to ESP32 bootloader...*\n\n"
+            "> **Note for VM USB Passthrough:** If your board does not enter bootloader automatically, "
+            "press and hold the physical **BOOT** button on the ESP32 for 2 seconds.",
+            title="ESP32 Firmware Update",
+            notification_id=NOTIFICATION_ID,
+        )
+
         try:
-            # 1. Stop serial client to free the COM/tty port
+            # 1. Attempt software bootloader transition before releasing serial port
+            try:
+                await self._client.async_enter_bootloader()
+            except Exception:
+                pass
+
+            # 2. Stop serial client to free the COM/tty port
             await self._client.async_stop()
 
-            # 2. Flash in executor
+            # 3. Flash in executor
             def _progress(msg: str) -> None:
-                _LOGGER.info("Flash progress: %s", msg)
+                _LOGGER.warning("[ESP32 CC1101 Flash Progress] %s", msg)
+                persistent_notification.async_create(
+                    self.hass,
+                    f"Flashing firmware on `{port}`:\n\n"
+                    f"**Progress:** `{msg}`\n\n"
+                    "> **Tip:** If stuck on *Connecting*, press and hold the physical **BOOT** button on the ESP32 for 2 seconds.",
+                    title="ESP32 Firmware Update",
+                    notification_id=NOTIFICATION_ID,
+                )
 
             await self.hass.async_add_executor_job(
                 flash_firmware_sync,
@@ -105,15 +131,35 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
                 _progress,
             )
 
-            # 3. Reconnect client
+            # 4. Reconnect client
             await self._client.async_start()
             self._attr_in_progress = False
             self.async_write_ha_state()
-            _LOGGER.info("Firmware flash complete on %s!", port)
+            _LOGGER.warning("[ESP32 CC1101] Firmware flash complete on %s! Reconnected.", port)
+
+            persistent_notification.async_create(
+                self.hass,
+                f"🎉 **Firmware successfully updated to v{TARGET_FW_VERSION}!**\n\n"
+                f"The ESP32 on port `{port}` has rebooted and reconnected to Home Assistant.",
+                title="ESP32 Firmware Updated",
+                notification_id=NOTIFICATION_ID,
+            )
         except Exception as exc:
             self._attr_in_progress = False
             self.async_write_ha_state()
-            _LOGGER.error("Failed to flash firmware: %s", exc)
+            _LOGGER.error("[ESP32 CC1101] Failed to flash firmware: %s", exc)
+
+            persistent_notification.async_create(
+                self.hass,
+                f"⚠️ **Firmware Update Incomplete on `{port}`**\n\n"
+                f"**Details:**\n`{exc}`\n\n"
+                "**How to solve on VM USB Passthrough:**\n"
+                "1. Click **Install** on the Firmware update card again.\n"
+                "2. **Immediately press and hold the physical 'BOOT' (IO0) button** on the ESP32 board for 2-3 seconds until flashing begins.",
+                title="ESP32 Flash Action Needed",
+                notification_id=NOTIFICATION_ID,
+            )
+
             # Reconnect even if flash failed
             try:
                 await self._client.async_start()

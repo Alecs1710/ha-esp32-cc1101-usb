@@ -479,3 +479,12 @@ class Esp32Cc1101Client:
     async def async_query_status(self) -> None:
         """Request status from ESP32."""
         self._write_line(json.dumps({"cmd": "get_status"}))
+
+    async def async_enter_bootloader(self) -> None:
+        """Send bootloader command to ESP32 before firmware flash."""
+        try:
+            self._write_line(json.dumps({"cmd": "bootloader"}))
+            await asyncio.sleep(0.2)
+        except Exception as exc:
+            _LOGGER.debug("Could not send bootloader command (ignored): %s", exc)
+

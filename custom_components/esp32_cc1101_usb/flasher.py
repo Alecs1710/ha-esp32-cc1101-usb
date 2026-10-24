@@ -26,6 +26,7 @@ def flash_firmware_sync(
     """Flash firmware binary to ESP32 using esptool in a synchronous call.
     
     Must be executed in an executor thread.
+    Logs at WARNING level so output is immediately visible in Home Assistant UI Logs.
     """
     if not firmware_path or not os.path.isfile(firmware_path):
         firmware_path = get_default_firmware_path()
@@ -34,8 +35,8 @@ def flash_firmware_sync(
         raise FileNotFoundError(f"Firmware binary not found at '{firmware_path}'")
 
     file_size = os.path.getsize(firmware_path)
-    _LOGGER.info(
-        "Preparing to flash ESP32 on port %s with binary %s (%d bytes)",
+    _LOGGER.warning(
+        "[ESP32 CC1101 Flash] Preparing to flash ESP32 on port %s with binary %s (%d bytes)",
         port,
         firmware_path,
         file_size,
@@ -61,6 +62,8 @@ def flash_firmware_sync(
             port,
             "--baud",
             str(attempt_baud),
+            "--connect-attempts",
+            "4",
             "--before",
             "default_reset",
             "--after",
@@ -76,30 +79,62 @@ def flash_firmware_sync(
         ]
 
         try:
-            _LOGGER.info("Flashing ESP32 via esptool at %d baud on %s...", attempt_baud, port)
-            result = subprocess.run(
+            _LOGGER.warning(
+                "[ESP32 CC1101 Flash] Attempting esptool on %s at %d baud (timeout 35s)...",
+                port,
+                attempt_baud,
+            )
+            if progress_callback:
+                progress_callback(f"Connecting to ESP32 on {port} at {attempt_baud} baud...")
+
+            proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                check=True,
-                timeout=120,
+                bufsize=1,
             )
-            output = result.stdout
-            _LOGGER.info("ESP32 flash completed successfully:\n%s", output)
-            if progress_callback:
-                progress_callback("Flash complete! ESP32 rebooted.")
-            return output
-        except subprocess.CalledProcessError as exc:
-            err_msg = f"esptool at {attempt_baud} baud failed (exit code {exc.returncode}):\n{exc.stdout}"
-            _LOGGER.warning("%s", err_msg)
-            last_error = exc
+
+            collected_output = []
+            try:
+                stdout_data, _ = proc.communicate(timeout=35)
+                output = stdout_data or ""
+                collected_output.append(output)
+
+                for raw_line in output.splitlines():
+                    line = raw_line.strip()
+                    if line:
+                        _LOGGER.warning("[ESP32 CC1101 Flash] %s", line)
+                        if progress_callback and any(
+                            tag in line for tag in ("Writing at", "Connecting", "Chip is", "Erasing", "Hash of")
+                        ):
+                            progress_callback(line)
+
+                if proc.returncode == 0:
+                    _LOGGER.warning("[ESP32 CC1101 Flash] Flash succeeded at %d baud! ESP32 rebooted.", attempt_baud)
+                    if progress_callback:
+                        progress_callback("Flash complete! ESP32 rebooted.")
+                    return output
+                else:
+                    err_msg = f"esptool returned non-zero code {proc.returncode} at {attempt_baud} baud"
+                    _LOGGER.warning("[ESP32 CC1101 Flash] %s", err_msg)
+                    last_error = RuntimeError(f"{err_msg}\n{output}")
+
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                err_msg = f"esptool timed out after 35s at {attempt_baud} baud (waiting for bootloader sync)"
+                _LOGGER.warning("[ESP32 CC1101 Flash] %s", err_msg)
+                last_error = TimeoutError(err_msg)
+
         except Exception as exc:
-            _LOGGER.warning("Subprocess flash at %d baud failed: %s", attempt_baud, exc)
+            _LOGGER.warning("[ESP32 CC1101 Flash] Subprocess execution error at %d baud: %s", attempt_baud, exc)
             last_error = exc
 
     # Final fallback: direct Python module call
-    _LOGGER.info("Attempting direct in-process esptool module call...")
+    _LOGGER.warning("[ESP32 CC1101 Flash] Attempting direct in-process esptool module call...")
+    if progress_callback:
+        progress_callback("Attempting direct in-process esptool call...")
     try:
         import esptool
 
@@ -110,6 +145,8 @@ def flash_firmware_sync(
             port,
             "--baud",
             "115200",
+            "--connect-attempts",
+            "4",
             "--before",
             "default_reset",
             "--after",
@@ -127,8 +164,18 @@ def flash_firmware_sync(
             esptool.main(esptool_args)
         except SystemExit as sys_exit:
             if sys_exit.code != 0:
-                raise RuntimeError(f"esptool exited with code {sys_exit.code}") from sys_exit
+                raise RuntimeError(f"esptool module exited with code {sys_exit.code}") from sys_exit
+        _LOGGER.warning("[ESP32 CC1101 Flash] Direct esptool module flash successful.")
+        if progress_callback:
+            progress_callback("Flash complete via module! ESP32 rebooted.")
         return "ESP32 firmware flashed via internal module successfully."
     except Exception as inner_exc:
-        _LOGGER.error("Direct esptool call also failed: %s", inner_exc)
-        raise RuntimeError(f"Firmware flash failed on port {port}: {last_error or inner_exc}") from inner_exc
+        _LOGGER.error("[ESP32 CC1101 Flash] Direct esptool call failed: %s", inner_exc)
+        explanation = (
+            f"Firmware flash failed to enter bootloader on port '{port}'.\n\n"
+            "CAUSE: In VM USB passthrough environments (TrueNAS, Proxmox, ESXi), "
+            "the host USB controller delays/batches DTR/RTS signals, so the ESP32 doesn't reset into ROM bootloader automatically.\n\n"
+            "SOLUTION: Click 'Install' on the Firmware card again, and IMMEDIATELY press and hold "
+            "the physical 'BOOT' (IO0) button on the ESP32 board for 2 seconds until the flashing starts."
+        )
+        raise RuntimeError(f"{explanation}\n(Error details: {last_error or inner_exc})") from inner_exc

@@ -387,11 +387,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.helpers import entity_registry as er
     ent_reg = er.async_get(hass)
     existing_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-    obsolete_keys = ("_ping_", "_reset_", "_flash_", "_frequency_")
+
+    valid_button_prefix = f"esp32_cc1101_cmd_{entry.entry_id}_"
+    valid_repeat_button = f"esp32_cc1101_repeat_{entry.entry_id}"
+    valid_numbers = {
+        f"esp32_cc1101_tx_power_{entry.entry_id}",
+        f"esp32_cc1101_repeats_{entry.entry_id}",
+        f"esp32_cc1101_sensitivity_{entry.entry_id}",
+        f"esp32_cc1101_min_repeats_{entry.entry_id}",
+    }
+
     for reg_entry in existing_entries:
-        if any(k in reg_entry.unique_id for k in obsolete_keys):
-            _LOGGER.info("Purging obsolete entity from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
-            ent_reg.async_remove(reg_entry.entity_id)
+        # Purge any obsolete/duplicate buttons (e.g. old ping, reset, flash, or duplicate repeat button)
+        if reg_entry.domain == "button":
+            if reg_entry.unique_id != valid_repeat_button and not reg_entry.unique_id.startswith(valid_button_prefix):
+                _LOGGER.info("Purging obsolete button from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
+                ent_reg.async_remove(reg_entry.entity_id)
+        # Purge obsolete numbers (e.g. old frequency number slider)
+        elif reg_entry.domain == "number":
+            if reg_entry.unique_id not in valid_numbers:
+                _LOGGER.info("Purging obsolete number from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
+                ent_reg.async_remove(reg_entry.entity_id)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
