@@ -24,7 +24,7 @@ from .flasher import flash_firmware_sync, get_default_firmware_path
 
 _LOGGER = logging.getLogger(__name__)
 
-TARGET_FW_VERSION = "3.6.0"
+TARGET_FW_VERSION = "3.7.0"
 
 
 async def async_setup_entry(
@@ -62,7 +62,7 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
             name=f"ESP32 CC1101 ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / Espressif",
             model="CC1101 + ESP32",
-            sw_version=client.version or "3.5.0",
+            sw_version=client.version if client.version != "Unknown" else None,
         )
 
     async def async_added_to_hass(self) -> None:
@@ -79,7 +79,7 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
     def installed_version(self) -> str | None:
         """Version currently installed on device."""
         if not self._client.version or self._client.version in ("Unknown", "None", ""):
-            return "3.5.0"
+            return None
         return self._client.version
 
     @property
@@ -133,12 +133,19 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
                 _progress,
             )
 
-            # 4. Reconnect client
-            await self._client.async_start()
-            self._attr_in_progress = False
+            # 4. Successfully flashed: update version state immediately
+            self._client.version = TARGET_FW_VERSION
             self._attr_update_percentage = 100
             self.async_write_ha_state()
-            _LOGGER.warning("[ESP32 CC1101] Firmware flash complete on %s! Reconnected.", port)
+
+            # Wait for ESP32 to finish bootloader hard-reset and boot
+            await asyncio.sleep(2.0)
+
+            # Reconnect serial client and query new telemetry
+            await self._client.async_start()
+            self._attr_in_progress = False
+            self.async_write_ha_state()
+            _LOGGER.warning("[ESP32 CC1101] Firmware flash complete on %s! Reconnected at v%s.", port, TARGET_FW_VERSION)
 
         except Exception as exc:
             self._attr_in_progress = False

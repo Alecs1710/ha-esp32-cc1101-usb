@@ -51,29 +51,29 @@ send_code:
       selector:
         number:
           min: 1
-          max: 4294967295
+          max: 18446744073709551615
           mode: box
     bits:
       name: Bit Length
-      description: Total bit count of the packet (standard remotes are 24-bit).
+      description: Total bit count of the packet (standard remotes are 24-bit, 32-bit, or 36-bit).
       required: false
       default: 24
-      example: 24
+      example: 36
       selector:
         number:
-          min: 12
-          max: 32
+          min: 8
+          max: 64
           mode: box
     protocol:
       name: Protocol Number
-      description: Standard protocol index (1 = standard PT2262/EV1527, 2 = 650µs, 6 = HT6P20B).
+      description: Standard protocol index (1 = EV1527/PT2262, 2 = 650µs, 6 = HT6P20B).
       required: false
       default: 1
       example: 1
       selector:
         number:
           min: 1
-          max: 12
+          max: 32
           mode: box
     pulse_length:
       name: Pulse Length
