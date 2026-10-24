@@ -104,14 +104,14 @@ class Esp32SavedCommandButton(ButtonEntity):
         self._command_name = command_name
         self._entry_data = entry_data
         slug = command_name.lower().replace(" ", "_")
-        self._attr_name = f"Command {command_name}"
+        self._attr_name = f"{command_name}"
         self._attr_unique_id = f"esp32_cc1101_cmd_{entry.entry_id}_{slug}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"ESP32 CC1101 USB ({entry.data.get(CONF_PORT, 'USB')})",
+            identifiers={(DOMAIN, f"{entry.entry_id}_learned_commands")},
+            name=f"ESP32 CC1101 Learned Remotes ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / ESP32",
-            model="CC1101 + ESP32-WROOM-32",
-            sw_version=client.version,
+            model="RF Stored Commands",
+            via_device=(DOMAIN, entry.entry_id),
         )
 
     async def async_press(self) -> None:

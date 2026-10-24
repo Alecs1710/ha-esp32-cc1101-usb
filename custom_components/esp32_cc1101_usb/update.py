@@ -24,7 +24,7 @@ from .flasher import flash_firmware_sync, get_default_firmware_path
 
 _LOGGER = logging.getLogger(__name__)
 
-TARGET_FW_VERSION = "3.7.0"
+TARGET_FW_VERSION = "3.7.1"
 
 
 async def async_setup_entry(
