@@ -291,38 +291,74 @@ async def async_delete_command_flow(
     if not entry_data:
         raise HomeAssistantError(f"Integration entry '{entry_id}' not found")
     name = name.strip()
+    if not name or name == "None":
+        raise HomeAssistantError("Please select a valid command to delete")
+
     saved = entry_data.get("saved_codes", {})
-    if name not in saved:
-        raise HomeAssistantError(f"Saved RF command '{name}' not found")
 
-    del saved[name]
-    await entry_data["store"].async_save(saved)
-    _LOGGER.info("Deleted saved RF command '%s' for entry %s", name, entry_id)
+    # Match in saved_codes (exact, case-insensitive, or slug)
+    matched_key = None
+    if name in saved:
+        matched_key = name
+    else:
+        for k in list(saved.keys()):
+            if k.lower() == name.lower() or k.lower().replace(" ", "_") == name.lower().replace(" ", "_"):
+                matched_key = k
+                break
 
-    # 1. Remove button entity dynamically if registered
+    if matched_key:
+        del saved[matched_key]
+        await entry_data["store"].async_save(saved)
+        _LOGGER.info("Deleted saved RF command '%s' from storage for entry %s", matched_key, entry_id)
+
+    # 1. Safely remove button entity dynamically if registered and active
     if entry_data.get("remove_button_callback"):
-        await entry_data["remove_button_callback"](name)
+        try:
+            await entry_data["remove_button_callback"](matched_key or name)
+        except Exception as err:
+            _LOGGER.debug("Dynamic button entity removal notice: %s", err)
 
-    # 2. Clean up Home Assistant entity registry to prevent orphaned entities
+    # 2. Comprehensive cleanup of Home Assistant Entity Registry
+    # Handles disabled entities, renamed entity_ids, and orphaned registry entries!
+    slug = (matched_key or name).lower().replace(" ", "_")
+    target_unique_id = f"esp32_cc1101_cmd_{entry_id}_{slug}"
+    purged_count = 0
+
     try:
         from homeassistant.helpers import entity_registry as er
         ent_reg = er.async_get(hass)
-        slug = name.lower().replace(" ", "_")
-        unique_id = f"esp32_cc1101_cmd_{entry_id}_{slug}"
-        entity_id = ent_reg.async_get_entity_id("button", DOMAIN, unique_id)
-        if entity_id:
-            ent_reg.async_remove(entity_id)
+        entries_to_remove = []
+        for ent_id, ent_entry in list(ent_reg.entities.items()):
+            if ent_entry.config_entry_id == entry_id and ent_entry.platform == DOMAIN:
+                if (
+                    ent_entry.unique_id == target_unique_id
+                    or ent_entry.original_name == (matched_key or name)
+                    or ent_entry.name == (matched_key or name)
+                    or ent_entry.entity_id == name
+                    or ent_entry.unique_id.endswith(f"_{slug}")
+                ):
+                    entries_to_remove.append(ent_id)
+
+        for ent_id in entries_to_remove:
+            ent_reg.async_remove(ent_id)
+            purged_count += 1
+            _LOGGER.info("Purged entity registry entry '%s'", ent_id)
     except Exception as err:
         _LOGGER.warning("Could not purge entity registry for '%s': %s", name, err)
 
+    if not matched_key and purged_count == 0:
+        raise HomeAssistantError(f"RF command '{name}' was not found in storage or registry")
+
     # 3. Notify select entity to update available choices
     if "update_delete_select_callback" in entry_data:
-        entry_data["update_delete_select_callback"]()
+        try:
+            entry_data["update_delete_select_callback"]()
+        except Exception:
+            pass
 
-    slug = name.lower().replace(" ", "_")
     persistent_notification.async_create(
         hass,
-        f"Learned RF command **{name}** has been permanently deleted.",
+        f"Learned RF command **{name}** has been completely deleted and purged.",
         title=f"Deleted RF Command: {name}",
         notification_id=f"{DOMAIN}_deleted_{entry_id}_{slug}",
     )

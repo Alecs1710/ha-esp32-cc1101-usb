@@ -34,11 +34,11 @@ class Esp32LearnNameText(TextEntity):
         self.entry_data = entry_data
         self._attr_unique_id = f"esp32_cc1101_learn_name_{entry.entry_id}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"ESP32 CC1101 USB ({entry.data.get(CONF_PORT, 'USB')})",
+            identifiers={(DOMAIN, f"{entry.entry_id}_learner")},
+            name=f"ESP32 CC1101 RF Learner ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / ESP32",
-            model="CC1101 + ESP32-WROOM-32",
-            sw_version=entry_data["client"].version,
+            model="RF Learning Studio",
+            via_device=(DOMAIN, entry.entry_id),
         )
         if "learn_name_input" not in entry_data:
             count = len(entry_data.get("saved_codes", {})) + 1

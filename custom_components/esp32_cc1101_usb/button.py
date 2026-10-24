@@ -50,9 +50,17 @@ async def async_setup_entry(
             async_add_entities([btn])
 
     async def remove_command_button(cmd_name: str) -> None:
-        if cmd_name in created_command_entities:
-            btn = created_command_entities.pop(cmd_name)
-            await btn.async_remove()
+        btn = created_command_entities.pop(cmd_name, None)
+        if not btn:
+            for k in list(created_command_entities.keys()):
+                if k.lower() == cmd_name.lower() or k.lower().replace(" ", "_") == cmd_name.lower().replace(" ", "_"):
+                    btn = created_command_entities.pop(k)
+                    break
+        if btn and getattr(btn, "hass", None) is not None:
+            try:
+                await btn.async_remove()
+            except Exception as err:
+                _LOGGER.debug("Could not dynamically remove entity '%s': %s", cmd_name, err)
 
     entry_data["add_button_callback"] = add_new_command_button
     entry_data["remove_button_callback"] = remove_command_button
@@ -113,11 +121,11 @@ class Esp32StartLearnButton(ButtonEntity):
         self.entry_data = entry_data
         self._attr_unique_id = f"esp32_cc1101_learn_start_{entry.entry_id}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"ESP32 CC1101 USB ({entry.data.get(CONF_PORT, 'USB')})",
+            identifiers={(DOMAIN, f"{entry.entry_id}_learner")},
+            name=f"ESP32 CC1101 RF Learner ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / ESP32",
-            model="CC1101 + ESP32-WROOM-32",
-            sw_version=client.version,
+            model="RF Learning Studio",
+            via_device=(DOMAIN, entry.entry_id),
         )
 
     async def async_press(self) -> None:
@@ -151,11 +159,11 @@ class Esp32CancelLearnButton(ButtonEntity):
         self.entry_data = entry_data
         self._attr_unique_id = f"esp32_cc1101_learn_cancel_{entry.entry_id}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=f"ESP32 CC1101 USB ({entry.data.get(CONF_PORT, 'USB')})",
+            identifiers={(DOMAIN, f"{entry.entry_id}_learner")},
+            name=f"ESP32 CC1101 RF Learner ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / ESP32",
-            model="CC1101 + ESP32-WROOM-32",
-            sw_version=client.version,
+            model="RF Learning Studio",
+            via_device=(DOMAIN, entry.entry_id),
         )
 
     async def async_press(self) -> None:

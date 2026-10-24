@@ -39,7 +39,7 @@ async def async_setup_entry(
         Esp32FrequencySelect(entry, client),
         Esp32ModulationSelect(entry, client),
         Esp32RxModeSelect(entry, client),
-        Esp32DeleteSelect(entry, entry_data),
+        Esp32DeleteSelect(hass, entry, entry_data),
     ]
     async_add_entities(entities)
 
@@ -180,7 +180,8 @@ class Esp32DeleteSelect(SelectEntity):
     _attr_name = "Delete RF Command"
     _attr_icon = "mdi:trash-can-outline"
 
-    def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
+        self.hass = hass
         self.entry = entry
         self.entry_data = entry_data
         self._attr_unique_id = f"esp32_cc1101_delete_select_{entry.entry_id}"
@@ -206,8 +207,24 @@ class Esp32DeleteSelect(SelectEntity):
 
     def _update_options(self) -> None:
         saved = self.entry_data.get("saved_codes", {})
-        names = sorted(list(saved.keys()))
-        self._attr_options = ["None"] + names
+        names = set(saved.keys())
+
+        try:
+            from homeassistant.helpers import entity_registry as er
+            ent_reg = er.async_get(self.hass)
+            prefix = f"esp32_cc1101_cmd_{self.entry.entry_id}_"
+            for ent_id, ent_entry in ent_reg.entities.items():
+                if ent_entry.config_entry_id == self.entry.entry_id and ent_entry.unique_id.startswith(prefix):
+                    if ent_entry.original_name:
+                        names.add(ent_entry.original_name)
+                    elif ent_entry.name:
+                        names.add(ent_entry.name)
+                    else:
+                        names.add(ent_entry.unique_id[len(prefix):].replace("_", " ").title())
+        except Exception as err:
+            _LOGGER.debug("Could not scan entity registry in delete select: %s", err)
+
+        self._attr_options = ["None"] + sorted(list(names))
 
     @property
     def current_option(self) -> str:
