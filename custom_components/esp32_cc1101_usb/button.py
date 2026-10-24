@@ -123,8 +123,22 @@ class Esp32SavedCommandButton(ButtonEntity):
                 f"Command '{self._command_name}' no longer exists in storage"
             )
         if isinstance(code, dict) and "code" in code:
+            code_val = code["code"]
+            if code.get("type") == "rolling_code":
+                delta = code.get("delta", 15)
+                next_code = code_val + delta
+                # Counter wrap handling for 4-bit counter (0..7) with inverted checksum nibble
+                counter = ((next_code & 0xFF) >> 4) & 0x0F
+                if counter > 7:
+                    next_code = (code.get("base_id", 0) << 8) | 0x07
+                code["code"] = next_code
+                self.hass.async_create_task(
+                    self._entry_data["store"].async_save(self._entry_data["saved_codes"])
+                )
+                code_val = next_code
+
             await self.client.async_send_code(
-                code=code["code"],
+                code=code_val,
                 bits=code.get("bits", 24),
                 protocol=code.get("protocol", 1),
                 pulse_length=code.get("pulse_length", 350),

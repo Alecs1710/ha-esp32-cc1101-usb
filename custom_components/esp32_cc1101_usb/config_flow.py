@@ -350,8 +350,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 ),
                 vol.Required(CONF_MIN_RSSI, default=cur_min_rssi): NumberSelector(
                     NumberSelectorConfig(
-                        min=-95,
-                        max=-40,
+                        min=-100,
+                        max=-10,
                         step=1,
                         unit_of_measurement="dBm",
                         mode=NumberSelectorMode.SLIDER,

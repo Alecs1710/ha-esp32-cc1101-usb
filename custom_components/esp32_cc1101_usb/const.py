@@ -48,14 +48,14 @@ RX_MODE_REV_MAP = {
     2: RX_MODE_LEARN,
 }
 
-# Frequency presets with available hardware frequency bands
-PRESET_433 = "433.92 MHz (Band: 387.0 - 464.0 MHz)"
-PRESET_315 = "315.00 MHz (Band: 300.0 - 348.0 MHz)"
-PRESET_868 = "868.35 MHz (Band: 779.0 - 900.0 MHz)"
-PRESET_915 = "915.00 MHz (Band: 902.0 - 928.0 MHz)"
-PRESET_433_SOMFY = "433.42 MHz (Band: 387.0 - 464.0 MHz)"
-PRESET_434 = "434.42 MHz (Band: 387.0 - 464.0 MHz)"
-PRESET_868_MBUS = "868.95 MHz (Band: 779.0 - 900.0 MHz)"
+# Frequency presets with clear, distinct descriptions
+PRESET_433 = "433.92 MHz (Standard RF - Band: 387-464 MHz)"
+PRESET_315 = "315.00 MHz (US / Asia - Band: 300-348 MHz)"
+PRESET_868 = "868.35 MHz (EU Security / Sensors - Band: 779-900 MHz)"
+PRESET_915 = "915.00 MHz (US ISM - Band: 902-928 MHz)"
+PRESET_433_SOMFY = "433.42 MHz (Somfy RTS Blinds)"
+PRESET_434 = "434.42 MHz (Fine-Tuned 434 MHz)"
+PRESET_868_MBUS = "868.95 MHz (Wireless M-Bus Meters)"
 
 FREQUENCY_PRESETS = [
     PRESET_433,
@@ -75,6 +75,14 @@ FREQUENCY_PRESET_MAP = {
     PRESET_433_SOMFY: 433.42,
     PRESET_434: 434.42,
     PRESET_868_MBUS: 868.95,
+    # Backward compatibility with older string formats
+    "433.92 MHz (Band: 387.0 - 464.0 MHz)": 433.92,
+    "315.00 MHz (Band: 300.0 - 348.0 MHz)": 315.00,
+    "868.35 MHz (Band: 779.0 - 900.0 MHz)": 868.35,
+    "915.00 MHz (Band: 902.0 - 928.0 MHz)": 915.00,
+    "433.42 MHz (Band: 387.0 - 464.0 MHz)": 433.42,
+    "434.42 MHz (Band: 387.0 - 464.0 MHz)": 434.42,
+    "868.95 MHz (Band: 779.0 - 900.0 MHz)": 868.95,
 }
 
 

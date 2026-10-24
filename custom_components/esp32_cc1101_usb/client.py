@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 import json
 import logging
+import time
 from typing import Any
 import serialx
 
@@ -119,6 +120,10 @@ class Esp32Cc1101Client:
         self.last_bit_length: int | None = None
         self.last_pulse_length: int | None = None
         self.last_rssi: int | None = None
+
+        # Burst fragment suppression tracking
+        self._last_rx_burst_time: float = 0.0
+        self._last_rx_burst_max_bits: int = 0
 
     def register_listener(self, callback: Callable[[dict[str, Any]], None]) -> Callable[[], None]:
         """Register a callback for telemetry and incoming signals."""
@@ -287,6 +292,28 @@ class Esp32Cc1101Client:
 
         # Standard RF code decoded
         if event == "rx_code":
+            bits = payload.get("bits", 0)
+            now_ts = time.time()
+
+            # Multi-repeat burst fragment suppression:
+            # If we recently received a longer complete frame (e.g. 32b) within the last 400ms,
+            # suppress shorter fragments (e.g. 12b, 16b, 20b, 24b) from the same physical press.
+            if (now_ts - self._last_rx_burst_time) < 0.400:
+                if bits < self._last_rx_burst_max_bits:
+                    _LOGGER.debug(
+                        "Suppressing %d-bit RF fragment (code=%s) during active %d-bit burst",
+                        bits,
+                        payload.get("code"),
+                        self._last_rx_burst_max_bits,
+                    )
+                    return
+                if bits > self._last_rx_burst_max_bits:
+                    self._last_rx_burst_max_bits = bits
+            else:
+                self._last_rx_burst_max_bits = bits
+
+            self._last_rx_burst_time = now_ts
+
             self.last_decoded_code = payload.get("code")
             self.last_protocol = payload.get("protocol")
             self.last_bit_length = payload.get("bits")
@@ -333,11 +360,12 @@ class Esp32Cc1101Client:
             self.last_bit_length = None
             self.last_pulse_length = None
 
-            _LOGGER.info(
-                "RF Raw Pulses Received: count=%s pulses, rssi=%ddBm, freq=%.2fMHz",
+            _LOGGER.warning(
+                "[ESP32 CC1101 Raw Capture] Pulses=%s, RSSI=%ddBm, Freq=%.2fMHz: %s",
                 payload.get("count", len(raw_str.split(",")) if raw_str else 0),
                 self.last_rssi or 0,
                 payload.get("freq", self.frequency),
+                raw_str,
             )
 
             self.hass.bus.async_fire(

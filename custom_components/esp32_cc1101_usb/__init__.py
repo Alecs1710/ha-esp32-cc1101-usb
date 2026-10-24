@@ -6,6 +6,7 @@ import asyncio
 from collections import Counter
 import logging
 import os
+import statistics
 import time
 from typing import Any
 import voluptuous as vol
@@ -115,28 +116,97 @@ SERVICE_FLASH_FIRMWARE_SCHEMA = vol.Schema(
 )
 
 
-def _average_rf_samples(samples: list[str]) -> str:
-    """Average raw pulse trains across multiple captures."""
-    parsed = []
+def _analyze_learning_consensus(
+    samples: list[str], decoded_samples: list[dict[str, Any]]
+) -> tuple[dict[str, Any] | str, str]:
+    """Analyzes multiple repetitions across button presses to find the true, confirmed RF code."""
+    # 1. Analyze decoded samples across all button presses
+    if decoded_samples:
+        bit_counts = Counter(s.get("bits", 0) for s in decoded_samples if s.get("bits"))
+        if bit_counts:
+            # Prioritize the longest complete bit length that appeared repeatedly
+            dominant_bits = None
+            for b, count in sorted(bit_counts.items(), key=lambda x: x[0], reverse=True):
+                if count >= 2 or count == len(decoded_samples):
+                    dominant_bits = b
+                    break
+            if not dominant_bits:
+                dominant_bits = bit_counts.most_common(1)[0][0]
+
+            valid_samples = [s for s in decoded_samples if s.get("bits") == dominant_bits]
+            if valid_samples:
+                codes = [s["code"] for s in valid_samples]
+                proto = valid_samples[0].get("protocol", 1)
+                pulse_lengths = [s.get("pulse_length", 350) for s in valid_samples if s.get("pulse_length")]
+                pulse_len = round(statistics.median(pulse_lengths)) if pulse_lengths else 350
+
+                # Check for rolling counter across ordered distinct button presses
+                unique_ordered: list[int] = []
+                for c in codes:
+                    if not unique_ordered or unique_ordered[-1] != c:
+                        unique_ordered.append(c)
+
+                if len(unique_ordered) >= 3:
+                    deltas = [unique_ordered[i + 1] - unique_ordered[i] for i in range(len(unique_ordered) - 1)]
+                    delta_counts = Counter(deltas)
+                    common_delta, delta_freq = delta_counts.most_common(1)[0]
+                    if delta_freq >= len(deltas) * 0.6 and common_delta > 0:
+                        latest_code = unique_ordered[-1]
+                        base_id = latest_code >> 8
+                        desc = (
+                            f"Learned as **Decoded Rolling Code** "
+                            f"(Base: `0x{base_id:06X}`, Step: `+{common_delta}`, {dominant_bits} bits, Protocol {proto})"
+                        )
+                        return {
+                            "type": "rolling_code",
+                            "code": latest_code,
+                            "base_id": base_id,
+                            "delta": common_delta,
+                            "bits": dominant_bits,
+                            "protocol": proto,
+                            "pulse_length": pulse_len,
+                        }, desc
+
+                # Fixed code (majority consensus)
+                most_common_code, _ = Counter(codes).most_common(1)[0]
+                desc = (
+                    f"Learned as **Decoded Protocol** "
+                    f"(Code: `{most_common_code}`, {dominant_bits} bits, Protocol {proto})"
+                )
+                return {
+                    "type": "code",
+                    "code": most_common_code,
+                    "bits": dominant_bits,
+                    "protocol": proto,
+                    "pulse_length": pulse_len,
+                }, desc
+
+    # 2. Raw pulse analysis across repetitions if not decoded
+    parsed: list[list[int]] = []
     for s in samples:
         try:
             pulses = [int(x.strip()) for x in s.split(",") if x.strip()]
-            if pulses:
+            if len(pulses) >= 16:
                 parsed.append(pulses)
         except ValueError:
             continue
 
     if not parsed:
-        return samples[-1] if samples else ""
+        raw_final = samples[-1] if samples else ""
+        return raw_final, f"Learned as **Raw Pulses** ({len(raw_final.split(','))} pulses)"
 
-    most_common_len = Counter(len(p) for p in parsed).most_common(1)[0][0]
-    matching = [p for p in parsed if len(p) == most_common_len]
+    target_len = Counter(len(p) for p in parsed).most_common(1)[0][0]
+    matching = [p for p in parsed if abs(len(p) - target_len) <= 2]
 
-    averaged = [
-        str(round(sum(p[i] for p in matching) / len(matching)))
-        for i in range(most_common_len)
-    ]
-    return ",".join(averaged)
+    min_len = min(len(p) for p in matching)
+    cleaned_pulses = []
+    for i in range(min_len):
+        vals = [p[i] for p in matching]
+        cleaned_pulses.append(str(round(statistics.median(vals))))
+
+    raw_str = ",".join(cleaned_pulses)
+    desc = f"Learned as **Cleaned Multi-Sample Raw RF** ({len(cleaned_pulses)} pulses across {len(matching)} repetitions)"
+    return raw_str, desc
 
 
 def _get_entry_data(
@@ -431,9 +501,9 @@ async def _handle_learning_sample(
     if (now - last_sample_time) < 0.7:
         return
 
-    # Filter out noisy partial fragments (< 40 pulses)
+    # Filter out noisy single-glitch pulses (< 16 pulses)
     pulse_parts = [p.strip() for p in raw_code.split(",") if p.strip()]
-    if len(pulse_parts) < 40:
+    if len(pulse_parts) < 16:
         return
 
     learning["last_sample_time"] = now
@@ -451,7 +521,7 @@ async def _handle_learning_sample(
     cmd_name = learning["name"]
 
     _LOGGER.info(
-        "Captured learning sample %d/%d for '%s' (%d pulses)",
+        "Captured learning repetition %d/%d for '%s' (%d pulses)",
         count,
         LEARN_STEPS,
         cmd_name,
@@ -461,47 +531,33 @@ async def _handle_learning_sample(
     if count < LEARN_STEPS:
         persistent_notification.async_create(
             hass,
-            f"Captured press **{count} of {LEARN_STEPS}** for `{cmd_name}`.\n\n"
-            f"Please press the physical remote button again ({LEARN_STEPS - count} remaining).",
+            f"Captured repetition **{count} of {LEARN_STEPS}** for `{cmd_name}`.\n\n"
+            f"Please press the remote button again ({LEARN_STEPS - count} remaining).",
             title=f"Learning RF Code: {cmd_name} ({count}/{LEARN_STEPS})",
             notification_id=f"{DOMAIN}_learning_{entry_id}",
         )
     else:
-        final_code = _average_rf_samples(learning["samples"])
+        result_code, desc = _analyze_learning_consensus(
+            learning["samples"], learning.get("decoded_samples", [])
+        )
         learning["active"] = False
         prev_mode = learning.get("prev_mode", RX_MODE_DECODED)
         client: Esp32Cc1101Client = entry_data["client"]
         hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
 
-        # Check if consistently decoded
-        decoded_list = learning.get("decoded_samples", [])
-        if len(decoded_list) == LEARN_STEPS:
-            first_sample = decoded_list[0]
-            entry_data["saved_codes"][cmd_name] = {
-                "type": "code",
-                "code": first_sample["code"],
-                "bits": first_sample["bits"],
-                "protocol": first_sample["protocol"],
-                "pulse_length": first_sample["pulse_length"],
-                "raw": final_code,
-            }
-            desc = f"Learned as **Decoded Protocol** (Code: `{first_sample['code']}`, {first_sample['bits']} bits)"
-        else:
-            entry_data["saved_codes"][cmd_name] = final_code
-            desc = f"Learned as **Raw Pulses** ({len(pulse_parts)} pulses)"
-
+        entry_data["saved_codes"][cmd_name] = result_code
         await entry_data["store"].async_save(entry_data["saved_codes"])
-        _LOGGER.info("Saved learned RF command '%s' after %d presses (%s)", cmd_name, LEARN_STEPS, desc)
+        _LOGGER.info("Saved learned RF command '%s' after %d repetitions (%s)", cmd_name, LEARN_STEPS, desc)
 
         if entry_data.get("add_button_callback"):
             entry_data["add_button_callback"](cmd_name)
 
         persistent_notification.async_create(
             hass,
-            f"Successfully learned and saved **{cmd_name}** after {LEARN_STEPS} presses!\n\n"
+            f"Successfully learned and confirmed **{cmd_name}** after {LEARN_STEPS} repetitions!\n\n"
             f"{desc}\n\n"
             f"A button entity for **{cmd_name}** has been added to your dashboard.",
-            title=f"RF Code Saved: {cmd_name}",
+            title=f"RF Code Learned: {cmd_name}",
             notification_id=f"{DOMAIN}_learning_{entry_id}",
         )
 

@@ -103,9 +103,31 @@ class Esp32Cc1101Remote(RemoteEntity):
 
             # Check if it's a saved command name
             if cmd_str in saved_codes:
-                await self.client.async_send_raw(
-                    saved_codes[cmd_str], repeats=num_repeats
-                )
+                saved = saved_codes[cmd_str]
+                if isinstance(saved, dict) and "code" in saved:
+                    code_val = saved["code"]
+                    if saved.get("type") == "rolling_code":
+                        delta = saved.get("delta", 15)
+                        next_code = code_val + delta
+                        counter = ((next_code & 0xFF) >> 4) & 0x0F
+                        if counter > 7:
+                            next_code = (saved.get("base_id", 0) << 8) | 0x07
+                        saved["code"] = next_code
+                        self.hass.async_create_task(
+                            self._entry_data["store"].async_save(saved_codes)
+                        )
+                        code_val = next_code
+                    await self.client.async_send_code(
+                        code=code_val,
+                        bits=saved.get("bits", 24),
+                        protocol=saved.get("protocol", 1),
+                        pulse_length=saved.get("pulse_length", 350),
+                        repeats=num_repeats,
+                    )
+                elif isinstance(saved, dict) and "raw" in saved:
+                    await self.client.async_send_raw(saved["raw"], repeats=num_repeats)
+                elif isinstance(saved, str):
+                    await self.client.async_send_raw(saved, repeats=num_repeats)
                 continue
 
             # Check if it's a JSON command (e.g. {"code": 12345, "protocol": 1})

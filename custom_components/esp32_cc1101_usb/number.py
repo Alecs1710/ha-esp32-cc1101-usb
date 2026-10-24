@@ -131,8 +131,8 @@ class Esp32SensitivityNumber(NumberEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Receiver Squelch"
-    _attr_native_min_value = -95
-    _attr_native_max_value = -40
+    _attr_native_min_value = -100
+    _attr_native_max_value = -10
     _attr_native_step = 1
     _attr_native_unit_of_measurement = "dBm"
     _attr_mode = NumberMode.SLIDER

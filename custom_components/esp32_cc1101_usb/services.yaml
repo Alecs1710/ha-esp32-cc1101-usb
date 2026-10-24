@@ -160,8 +160,8 @@ set_config:
       example: -75
       selector:
         number:
-          min: -95
-          max: -40
+          min: -100
+          max: -10
           unit_of_measurement: "dBm"
           mode: slider
     min_repeats:
