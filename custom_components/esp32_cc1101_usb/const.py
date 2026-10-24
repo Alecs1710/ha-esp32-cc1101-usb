@@ -33,7 +33,6 @@ RX_MODE_LEARN = "Learn Mode"
 RX_MODE_OPTIONS = [
     RX_MODE_DECODED,
     RX_MODE_ALL,
-    RX_MODE_LEARN,
 ]
 
 RX_MODE_MAP = {

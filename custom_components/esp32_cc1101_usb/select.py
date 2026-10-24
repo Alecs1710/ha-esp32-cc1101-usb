@@ -39,6 +39,7 @@ async def async_setup_entry(
         Esp32FrequencySelect(entry, client),
         Esp32ModulationSelect(entry, client),
         Esp32RxModeSelect(entry, client),
+        Esp32DeleteSelect(entry, entry_data),
     ]
     async_add_entities(entities)
 
@@ -161,11 +162,60 @@ class Esp32RxModeSelect(SelectEntity):
     @property
     def current_option(self) -> str:
         """Return the current reception mode."""
-        return self.client.rx_mode
+        if self.client.rx_mode in RX_MODE_OPTIONS:
+            return self.client.rx_mode
+        return RX_MODE_DECODED
 
     async def async_select_option(self, option: str) -> None:
         """Change the reception mode."""
         if option in RX_MODE_OPTIONS:
             await self.client.async_set_config(rx_mode=option)
             self.async_write_ha_state()
+
+
+class Esp32DeleteSelect(SelectEntity):
+    """Selector to choose which learned RF command to delete."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Delete RF Command"
+    _attr_icon = "mdi:trash-can-outline"
+
+    def __init__(self, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
+        self.entry = entry
+        self.entry_data = entry_data
+        self._attr_unique_id = f"esp32_cc1101_delete_select_{entry.entry_id}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}_learned_commands")},
+            name=f"ESP32 CC1101 Learned Remotes ({entry.data.get(CONF_PORT, 'USB')})",
+            manufacturer="Texas Instruments / ESP32",
+            model="RF Stored Commands",
+            via_device=(DOMAIN, entry.entry_id),
+        )
+        self._selected = "None"
+        self._update_options()
+
+        def _refresh() -> None:
+            self._update_options()
+            if self._selected not in self._attr_options:
+                self._selected = "None"
+            self.entry_data["delete_target_name"] = self._selected
+            self.async_write_ha_state()
+
+        entry_data["update_delete_select_callback"] = _refresh
+        entry_data["delete_target_name"] = self._selected
+
+    def _update_options(self) -> None:
+        saved = self.entry_data.get("saved_codes", {})
+        names = sorted(list(saved.keys()))
+        self._attr_options = ["None"] + names
+
+    @property
+    def current_option(self) -> str:
+        return self._selected
+
+    async def async_select_option(self, option: str) -> None:
+        self._selected = option
+        self.entry_data["delete_target_name"] = option
+        self.async_write_ha_state()
+
 

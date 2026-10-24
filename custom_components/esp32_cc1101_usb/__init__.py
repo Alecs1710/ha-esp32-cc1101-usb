@@ -45,7 +45,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["remote", "sensor", "select", "number", "button", "update"]
+PLATFORMS = ["remote", "sensor", "select", "number", "button", "update", "text"]
 
 SERVICE_SEND_RAW_SCHEMA = vol.Schema(
     {
@@ -228,6 +228,106 @@ def _get_entry_data(
     raise HomeAssistantError("No active ESP32 CC1101 USB connection available")
 
 
+async def async_start_learning_flow(
+    hass: HomeAssistant, entry_id: str, name: str
+) -> None:
+    """Start RF learning flow for a given command name."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        raise HomeAssistantError(f"Integration entry '{entry_id}' not found")
+    name = name.strip()
+    if not name:
+        raise HomeAssistantError("Command name cannot be empty")
+
+    prev_mode = entry_data["client"].rx_mode
+    entry_data["learning"] = {
+        "active": True,
+        "name": name,
+        "samples": [],
+        "decoded_samples": [],
+        "last_sample_time": 0.0,
+        "prev_mode": prev_mode,
+    }
+    await entry_data["client"].async_set_config(rx_mode="Learn Mode")
+    _LOGGER.info(
+        "Starting RF learning mode for command '%s' (press remote button %d times)",
+        name,
+        LEARN_STEPS,
+    )
+
+    persistent_notification.async_create(
+        hass,
+        f"Ready to learn **{name}**.\n\n"
+        f"Please press the button on your physical remote **{LEARN_STEPS} times** "
+        f"(pause 1 second between presses).",
+        title=f"Learning RF Code: {name} (0/{LEARN_STEPS})",
+        notification_id=f"{DOMAIN}_learning_{entry_id}",
+    )
+
+
+async def async_cancel_learning_flow(
+    hass: HomeAssistant, entry_id: str
+) -> None:
+    """Cancel ongoing RF learning flow."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        return
+    learning = entry_data.get("learning")
+    if learning and learning.get("active"):
+        learning["active"] = False
+        prev_mode = learning.get("prev_mode", RX_MODE_DECODED)
+        await entry_data["client"].async_set_config(rx_mode=prev_mode)
+        persistent_notification.async_dismiss(
+            hass, notification_id=f"{DOMAIN}_learning_{entry_id}"
+        )
+        _LOGGER.info("RF learning mode cancelled for entry %s", entry_id)
+
+
+async def async_delete_command_flow(
+    hass: HomeAssistant, entry_id: str, name: str
+) -> None:
+    """Delete a learned command, persist storage, and remove its button entity."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        raise HomeAssistantError(f"Integration entry '{entry_id}' not found")
+    name = name.strip()
+    saved = entry_data.get("saved_codes", {})
+    if name not in saved:
+        raise HomeAssistantError(f"Saved RF command '{name}' not found")
+
+    del saved[name]
+    await entry_data["store"].async_save(saved)
+    _LOGGER.info("Deleted saved RF command '%s' for entry %s", name, entry_id)
+
+    # 1. Remove button entity dynamically if registered
+    if entry_data.get("remove_button_callback"):
+        await entry_data["remove_button_callback"](name)
+
+    # 2. Clean up Home Assistant entity registry to prevent orphaned entities
+    try:
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(hass)
+        slug = name.lower().replace(" ", "_")
+        unique_id = f"esp32_cc1101_cmd_{entry_id}_{slug}"
+        entity_id = ent_reg.async_get_entity_id("button", DOMAIN, unique_id)
+        if entity_id:
+            ent_reg.async_remove(entity_id)
+    except Exception as err:
+        _LOGGER.warning("Could not purge entity registry for '%s': %s", name, err)
+
+    # 3. Notify select entity to update available choices
+    if "update_delete_select_callback" in entry_data:
+        entry_data["update_delete_select_callback"]()
+
+    slug = name.lower().replace(" ", "_")
+    persistent_notification.async_create(
+        hass,
+        f"Learned RF command **{name}** has been permanently deleted.",
+        title=f"Deleted RF Command: {name}",
+        notification_id=f"{DOMAIN}_deleted_{entry_id}_{slug}",
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ESP32 CC1101 USB from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -310,31 +410,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         async def async_learn_command_service(call: ServiceCall) -> None:
-            entry_id, data = _get_entry_data(hass, call.data.get("config_entry_id"))
+            entry_id, _ = _get_entry_data(hass, call.data.get("config_entry_id"))
             name = call.data["name"].strip()
-            if not name:
-                raise HomeAssistantError("Command name cannot be empty")
-
-            prev_mode = data["client"].rx_mode
-            data["learning"] = {
-                "active": True,
-                "name": name,
-                "samples": [],
-                "decoded_samples": [],
-                "last_sample_time": 0.0,
-                "prev_mode": prev_mode,
-            }
-            await data["client"].async_set_config(rx_mode="Learn Mode")
-            _LOGGER.info("Starting RF learning mode for command '%s' (press remote button %d times)", name, LEARN_STEPS)
-
-            persistent_notification.async_create(
-                hass,
-                f"Ready to learn **{name}**.\n\n"
-                f"Please press the button on your physical remote **{LEARN_STEPS} times** "
-                f"(pause 1 second between presses).",
-                title=f"Learning RF Code: {name} (0/{LEARN_STEPS})",
-                notification_id=f"{DOMAIN}_learning_{entry_id}",
-            )
+            await async_start_learning_flow(hass, entry_id, name)
 
         async def async_send_command_service(call: ServiceCall) -> None:
             _, data = _get_entry_data(hass, call.data.get("config_entry_id"))
@@ -359,15 +437,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await data["client"].async_send_raw(cmd_data["raw"], repeats=repeats)
 
         async def async_delete_command_service(call: ServiceCall) -> None:
-            _, data = _get_entry_data(hass, call.data.get("config_entry_id"))
+            entry_id, _ = _get_entry_data(hass, call.data.get("config_entry_id"))
             name = call.data["name"].strip()
-            saved = data.get("saved_codes", {})
-            if name in saved:
-                del saved[name]
-                await data["store"].async_save(saved)
-                _LOGGER.info("Deleted saved RF command '%s'", name)
-            else:
-                raise HomeAssistantError(f"Saved RF command '{name}' not found")
+            await async_delete_command_flow(hass, entry_id, name)
 
         async def async_ping_service(call: ServiceCall) -> None:
             _, data = _get_entry_data(hass, call.data.get("config_entry_id"))
@@ -551,6 +623,15 @@ async def _handle_learning_sample(
 
         if entry_data.get("add_button_callback"):
             entry_data["add_button_callback"](cmd_name)
+
+        if "update_delete_select_callback" in entry_data:
+            entry_data["update_delete_select_callback"]()
+
+        next_count = len(entry_data["saved_codes"]) + 1
+        next_name = f"Remote Button {next_count}"
+        entry_data["learn_name_input"] = next_name
+        if "update_learn_name_callback" in entry_data:
+            entry_data["update_learn_name_callback"](next_name)
 
         persistent_notification.async_create(
             hass,

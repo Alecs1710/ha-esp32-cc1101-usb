@@ -180,24 +180,13 @@ class Esp32Cc1101Remote(RemoteEntity):
             raise HomeAssistantError("Must specify at least one command name to learn")
 
         cmd_name = str(commands[0]).strip()
-        entry_data = self.hass.data[DOMAIN].get(self._entry_id, {})
-        entry_data["learning"] = {
-            "active": True,
-            "name": cmd_name,
-            "samples": [],
-        }
+        from . import async_start_learning_flow
+        await async_start_learning_flow(self.hass, self._entry_id, cmd_name)
 
     async def async_delete_command(self, **kwargs: Any) -> None:
         """Delete stored commands from persistent storage."""
         commands = kwargs.get(ATTR_COMMAND, [])
-        entry_data = self.hass.data[DOMAIN].get(self._entry_id, {})
-        saved_codes = entry_data.get("saved_codes", {})
-        store = entry_data.get("store")
-
+        from . import async_delete_command_flow
         for cmd in commands:
             cmd_name = str(cmd).strip()
-            if cmd_name in saved_codes:
-                del saved_codes[cmd_name]
-
-        if store:
-            await store.async_save(saved_codes)
+            await async_delete_command_flow(self.hass, self._entry_id, cmd_name)

@@ -58,6 +58,28 @@
     "select": {
       "rx_mode": {
         "name": "RF Reception Mode"
+      },
+      "delete_select": {
+        "name": "Delete RF Command"
+      }
+    },
+    "button": {
+      "repeat": {
+        "name": "Repeat Last Code"
+      },
+      "learn_start": {
+        "name": "Start Learning RF Code"
+      },
+      "learn_cancel": {
+        "name": "Cancel Learning"
+      },
+      "confirm_delete": {
+        "name": "Confirm Delete Command"
+      }
+    },
+    "text": {
+      "learn_name": {
+        "name": "New RF Button Name"
       }
     }
   }
