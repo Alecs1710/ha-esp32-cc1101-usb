@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
-from homeassistant.components import persistent_notification
 from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -21,7 +21,6 @@ from .flasher import flash_firmware_sync, get_default_firmware_path
 _LOGGER = logging.getLogger(__name__)
 
 TARGET_FW_VERSION = "3.6.0"
-NOTIFICATION_ID = "esp32_cc1101_firmware_update"
 
 
 async def async_setup_entry(
@@ -77,21 +76,6 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
         """Latest available version bundled in the integration."""
         return TARGET_FW_VERSION
 
-    def _notify(self, message: str, title: str = "ESP32 Firmware Update") -> None:
-        """Post a persistent notification safely from either the event loop or an executor worker thread."""
-        def _schedule() -> None:
-            persistent_notification.async_create(
-                self.hass,
-                message,
-                title=title,
-                notification_id=NOTIFICATION_ID,
-            )
-
-        try:
-            self.hass.loop.call_soon_threadsafe(_schedule)
-        except Exception as err:
-            _LOGGER.debug("Could not schedule persistent notification: %s", err)
-
     async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
         """Flash latest firmware to ESP32."""
         port = self._entry.data.get(CONF_PORT)
@@ -104,15 +88,8 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
 
         _LOGGER.warning("[ESP32 CC1101] Starting firmware flash to %s...", port)
         self._attr_in_progress = True
+        self._attr_update_percentage = 0
         self.async_write_ha_state()
-
-        self._notify(
-            f"Starting firmware update on port `{port}`...\n\n"
-            "⏳ *Connecting to ESP32 bootloader...*\n\n"
-            "> **Note for VM USB Passthrough:** If your board does not enter bootloader automatically, "
-            "press and hold the physical **BOOT** button on the ESP32 for 2 seconds (or use a 10µF capacitor between EN and GND).",
-            title="ESP32 Firmware Update",
-        )
 
         try:
             # 1. Attempt software bootloader transition before releasing serial port
@@ -124,15 +101,18 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
             # 2. Stop serial client to free the COM/tty port
             await self._client.async_stop()
 
-            # 3. Flash in executor
+            # 3. Flash in executor with thread-safe UI percentage updates
             def _progress(msg: str) -> None:
                 _LOGGER.warning("[ESP32 CC1101 Flash Progress] %s", msg)
-                self._notify(
-                    f"Flashing firmware on `{port}`:\n\n"
-                    f"**Progress:** `{msg}`\n\n"
-                    "> **Tip:** If stuck on *Connecting*, press and hold the physical **BOOT** button on the ESP32 for 2 seconds.",
-                    title="ESP32 Firmware Update",
-                )
+                # Parse progress percentages e.g. "(25 %)" or "25%"
+                pct_match = re.search(r"(\d{1,3})\s*%", msg)
+                if pct_match:
+                    try:
+                        pct = int(pct_match.group(1))
+                        self._attr_update_percentage = min(100, max(0, pct))
+                        self.hass.loop.call_soon_threadsafe(self.async_write_ha_state)
+                    except Exception:
+                        pass
 
             await self.hass.async_add_executor_job(
                 flash_firmware_sync,
@@ -145,31 +125,23 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
             # 4. Reconnect client
             await self._client.async_start()
             self._attr_in_progress = False
+            self._attr_update_percentage = 100
             self.async_write_ha_state()
             _LOGGER.warning("[ESP32 CC1101] Firmware flash complete on %s! Reconnected.", port)
 
-            self._notify(
-                f"🎉 **Firmware successfully updated to v{TARGET_FW_VERSION}!**\n\n"
-                f"The ESP32 on port `{port}` has rebooted and reconnected to Home Assistant.",
-                title="ESP32 Firmware Updated",
-            )
         except Exception as exc:
             self._attr_in_progress = False
+            self._attr_update_percentage = None
             self.async_write_ha_state()
             _LOGGER.error("[ESP32 CC1101] Failed to flash firmware: %s", exc)
 
-            self._notify(
-                f"⚠️ **Firmware Update Incomplete on `{port}`**\n\n"
-                f"**Details:**\n`{exc}`\n\n"
-                "**How to solve on VM USB Passthrough:**\n"
-                "1. Click **Install** on the Firmware update card again.\n"
-                "2. **Immediately press and hold the physical 'BOOT' (IO0) button** on the ESP32 board for 2-3 seconds until flashing begins (or add a 10µF capacitor between EN and GND).",
-                title="ESP32 Flash Action Needed",
-            )
-
-            # Reconnect even if flash failed
+            # Reconnect client even if flash failed
             try:
                 await self._client.async_start()
             except Exception:
                 pass
-            raise HomeAssistantError(f"Firmware flash failed: {exc}") from exc
+
+            raise HomeAssistantError(
+                f"Firmware flash failed: {exc}. "
+                "Tip for VM USB passthrough: Click Install again and immediately hold the physical BOOT button for 2 seconds (or use a 10µF capacitor between EN and GND)."
+            ) from exc
