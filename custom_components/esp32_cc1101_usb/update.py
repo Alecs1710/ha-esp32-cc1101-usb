@@ -7,7 +7,11 @@ import os
 import re
 from typing import Any
 
-from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
+from homeassistant.components.update import (
+    UpdateDeviceClass,
+    UpdateEntity,
+    UpdateEntityFeature,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -39,7 +43,14 @@ class Esp32Cc1101FirmwareUpdate(UpdateEntity):
 
     _attr_has_entity_name = True
     _attr_name = "Firmware"
+    _attr_device_class = UpdateDeviceClass.FIRMWARE
+    _attr_icon = "mdi:chip"
     _attr_supported_features = UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+
+    @property
+    def entity_picture(self) -> str | None:
+        """Return None so Home Assistant renders the standard MDI icon instead of a broken brand image."""
+        return None
 
     def __init__(self, entry: ConfigEntry, client: Esp32Cc1101Client) -> None:
         """Initialize the update entity."""
