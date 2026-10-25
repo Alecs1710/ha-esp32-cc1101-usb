@@ -278,8 +278,9 @@ class Esp32LearningSensor(SensorEntity):
             label = f"{dev} - {name}" if dev else name
             return f"Learning '{label}' ({count}/{LEARN_STEPS} presses)"
 
-        saved_count = len(entry_data.get("saved_codes", {}))
-        return f"Idle ({saved_count} saved)"
+        saved = entry_data.get("saved_codes", {})
+        saved_commands = [k for k in saved if not k.startswith("__")]
+        return f"Idle ({len(saved_commands)} saved)"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -287,11 +288,12 @@ class Esp32LearningSensor(SensorEntity):
         entry_data = self.hass.data.get(DOMAIN, {}).get(self.entry.entry_id, {})
         saved = entry_data.get("saved_codes", {})
         learning = entry_data.get("learning", {})
+        saved_commands = [k for k in saved if not k.startswith("__")]
         return {
             "learning_active": learning.get("active", False),
             "target_command": learning.get("name", ""),
             "presses_captured": len(learning.get("samples", [])),
             "presses_required": LEARN_STEPS,
-            "saved_commands_count": len(saved),
-            "saved_commands": list(saved.keys()),
+            "saved_commands_count": len(saved_commands),
+            "saved_commands": saved_commands,
         }

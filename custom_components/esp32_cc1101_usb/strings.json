@@ -32,27 +32,33 @@
     "step": {
       "init": {
         "title": "ESP32 CC1101 RF Studio",
-        "description": "Choose an action to configure devices, learn buttons, or tune radio settings.",
+        "description": "Choose an action to manage devices or tune radio parameters.",
         "menu_options": {
-          "add_device_or_button": "Add / Learn Button to Device",
-          "delete_command": "Delete Learned Button",
-          "radio_settings": "Radio Parameters & Tuning"
+          "create_device": "➕ Create New RF Device",
+          "learn_button": "🎯 Learn Button for Existing Device",
+          "radio_settings": "⚙️ CC1101 Radio Parameters & Tuning"
         }
       },
-      "add_device_or_button": {
-        "title": "Add / Learn RF Remote Button",
-        "description": "Choose a device (or create a new one) and enter the exact button name to learn. Once submitted, press your physical remote button 3 times.",
+      "create_device": {
+        "title": "Create New RF Device",
+        "description": "Enter a name for the device you want to control (e.g. Ventilador Techo, Garage Door, Blinds). After creation, open the device to learn its remote buttons.",
         "data": {
-          "target_device": "Target Device",
-          "new_device_name": "New Device Name (if creating new)",
+          "device_name": "Device Name"
+        }
+      },
+      "device_learn_button": {
+        "title": "Learn RF Button: {device_name}",
+        "description": "Enter the name of the button to learn (e.g. Speed 1, Off, Light). Once submitted, press your physical remote button 3 times.",
+        "data": {
           "button_name": "Button / Command Name"
         }
       },
-      "delete_command": {
-        "title": "Delete Learned RF Button",
-        "description": "Select a learned RF command to delete from storage and purge from Home Assistant.",
+      "learn_button": {
+        "title": "Learn RF Remote Button",
+        "description": "Select the target device and enter the button name to learn. Once submitted, press your physical remote button 3 times.",
         "data": {
-          "command_to_delete": "Command to Delete"
+          "target_device": "Target Device",
+          "button_name": "Button / Command Name"
         }
       },
       "radio_settings": {
@@ -71,9 +77,8 @@
       }
     },
     "error": {
-      "device_name_required": "Please enter a name for the new device.",
-      "button_name_required": "Please enter a name for the button to learn.",
-      "command_required": "Please choose a command to delete."
+      "device_name_required": "Please enter a name for the device.",
+      "button_name_required": "Please enter a name for the button to learn."
     }
   },
   "entity": {

@@ -46,7 +46,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["remote", "sensor", "select", "number", "button", "update"]
+PLATFORMS = ["remote", "sensor", "select", "number", "button", "fan", "light", "update"]
 
 SERVICE_SEND_RAW_SCHEMA = vol.Schema(
     {
@@ -498,6 +498,12 @@ async def async_remove_config_entry_device(
         saved.pop(k, None)
         _LOGGER.info("Deleted code '%s' due to device '%s' removal", k, dev_name)
 
+    # Also remove device from persistent devices list
+    devices_list = saved.get("__devices__", [])
+    for d in list(devices_list):
+        if d.lower() == dev_name.lower() or d.lower().replace(" ", "_") == dev_name.lower().replace(" ", "_"):
+            devices_list.remove(d)
+
     await entry_data["store"].async_save(saved)
 
     # Remove in-memory button entities
@@ -545,10 +551,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "saved_codes": saved_codes,
         "learning": {"active": False, "name": "", "samples": [], "decoded_samples": [], "last_sample_time": 0.0},
         "add_button_callback": None,
+        "state_listeners": {},
     }
     hass.data[DOMAIN][entry.entry_id] = entry_data
 
-    # Setup listener for learning mode captures
+    # Setup listener for learning mode captures & passive state updates
     def on_client_event(data: dict[str, Any]) -> None:
         event_type = data.get("type")
         if event_type in ("rx_code", "rx_raw"):
@@ -560,6 +567,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     hass.async_create_task(
                         _handle_learning_sample(hass, entry.entry_id, raw_code, payload)
                     )
+            else:
+                _handle_passive_rf_receive(hass, entry.entry_id, client, data)
 
     client.register_listener(on_client_event)
 
@@ -765,6 +774,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info("Purging obsolete number from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
                 ent_reg.async_remove(reg_entry.entity_id)
 
+    # Ensure all user-created devices exist in Home Assistant's Device Registry
+    dev_reg = dr.async_get(hass)
+    device_names = set(saved_codes.get("__devices__", []))
+    for k, v in saved_codes.items():
+        if k.startswith("__"):
+            continue
+        if isinstance(v, dict) and v.get("device"):
+            device_names.add(v["device"].strip())
+        elif " - " in k:
+            device_names.add(k.split(" - ", 1)[0].strip())
+
+    for dev_name in device_names:
+        if not dev_name:
+            continue
+        slug_dev = dev_name.lower().replace(" ", "_")
+        dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, f"{entry.entry_id}_dev_{slug_dev}")},
+            name=dev_name,
+            manufacturer="ESP32 CC1101 RF",
+            model="Learned RF Device",
+            via_device=(DOMAIN, entry.entry_id),
+        )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -852,11 +885,27 @@ async def _handle_learning_sample(
             }
 
         entry_data["saved_codes"][full_cmd_name] = result_code
+        if dev_name:
+            devices_list = entry_data["saved_codes"].setdefault("__devices__", [])
+            if dev_name not in devices_list:
+                devices_list.append(dev_name)
         await entry_data["store"].async_save(entry_data["saved_codes"])
         _LOGGER.info("Saved learned RF command '%s' after %d repetitions (%s)", full_cmd_name, LEARN_STEPS, desc)
 
         if entry_data.get("add_button_callback"):
             entry_data["add_button_callback"](full_cmd_name)
+
+        if entry_data.get("update_fan_commands_callback"):
+            try:
+                entry_data["update_fan_commands_callback"](full_cmd_name)
+            except Exception as err:
+                _LOGGER.debug("Error updating fan commands callback: %s", err)
+
+        if entry_data.get("update_light_commands_callback"):
+            try:
+                entry_data["update_light_commands_callback"](full_cmd_name)
+            except Exception as err:
+                _LOGGER.debug("Error updating light commands callback: %s", err)
 
         if "update_delete_select_callback" in entry_data:
             try:
@@ -898,6 +947,80 @@ async def _handle_learning_sample(
             title=f"RF Code Learned: {display_label}",
             notification_id=f"{DOMAIN}_learning_{entry_id}",
         )
+
+
+def _handle_passive_rf_receive(
+    hass: HomeAssistant, entry_id: str, client: Esp32Cc1101Client, data: dict[str, Any]
+) -> None:
+    """Handle incoming RF packets in normal listening mode to synchronize device states."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        return
+
+    saved_codes = entry_data.get("saved_codes", {})
+    payload = data.get("payload", {})
+    rx_code = payload.get("code")
+
+    matched_key: str | None = None
+    matched_data: dict[str, Any] | str | None = None
+
+    if rx_code is not None:
+        for k, v in saved_codes.items():
+            if k.startswith("__"):
+                continue
+            if isinstance(v, dict):
+                if v.get("type") == "code" and v.get("code") == rx_code:
+                    matched_key = k
+                    matched_data = v
+                    break
+                elif v.get("type") == "rolling_code":
+                    base_id = v.get("base_id")
+                    if base_id and (rx_code >> 8) == base_id:
+                        matched_key = k
+                        matched_data = v
+                        # Keep counter in sync with physical remote!
+                        v["code"] = rx_code
+                        hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                        break
+
+    if not matched_key:
+        return
+
+    dev_name = ""
+    cmd_name = matched_key
+    if isinstance(matched_data, dict) and matched_data.get("device"):
+        dev_name = matched_data["device"].strip()
+        cmd_name = matched_data.get("command", matched_key).strip()
+    elif " - " in matched_key:
+        dev_name, cmd_name = matched_key.split(" - ", 1)
+        dev_name = dev_name.strip()
+        cmd_name = cmd_name.strip()
+
+    _LOGGER.info(
+        "Physical RF remote detected: Device '%s' -> Button '%s' (RSSI: %s dBm)",
+        dev_name,
+        cmd_name,
+        client.last_rssi,
+    )
+
+    # Fire HA event for automations
+    hass.bus.async_fire(
+        f"{DOMAIN}_button_pressed",
+        {
+            "device": dev_name,
+            "command": cmd_name,
+            "code": rx_code,
+            "rssi": client.last_rssi,
+        },
+    )
+
+    # Notify state listeners (e.g. Fan or Light entities)
+    state_listeners = entry_data.get("state_listeners", {})
+    for listener in list(state_listeners.values()):
+        try:
+            listener(dev_name, cmd_name)
+        except Exception as err:
+            _LOGGER.debug("State listener callback error: %s", err)
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
