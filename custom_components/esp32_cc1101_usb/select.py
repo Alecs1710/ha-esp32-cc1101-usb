@@ -39,7 +39,6 @@ async def async_setup_entry(
         Esp32FrequencySelect(entry, client),
         Esp32ModulationSelect(entry, client),
         Esp32RxModeSelect(entry, client),
-        Esp32DeleteSelect(hass, entry, entry_data),
     ]
     async_add_entities(entities)
 
@@ -173,12 +172,82 @@ class Esp32RxModeSelect(SelectEntity):
             self.async_write_ha_state()
 
 
+class Esp32TargetDeviceSelect(SelectEntity):
+    """Selector to pick from existing learned devices or specify a new device."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Select Target Device"
+    _attr_icon = "mdi:devices"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
+        self.hass = hass
+        self.entry = entry
+        self.entry_data = entry_data
+        self._attr_unique_id = f"esp32_cc1101_target_dev_select_{entry.entry_id}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}_learner")},
+            name=f"ESP32 CC1101 RF Learner ({entry.data.get(CONF_PORT, 'USB')})",
+            manufacturer="Texas Instruments / ESP32",
+            model="RF Learning Studio",
+            via_device=(DOMAIN, entry.entry_id),
+        )
+        self._selected = entry_data.get("target_device_input", "Ceiling Fan")
+        self._update_options()
+
+        def _refresh() -> None:
+            self._update_options()
+            current = self.entry_data.get("target_device_input", "Ceiling Fan")
+            if current in self._attr_options:
+                self._selected = current
+            elif "New Device (Use Text Below)" in self._attr_options:
+                self._selected = "New Device (Use Text Below)"
+            if getattr(self, "hass", None) is not None:
+                self.async_write_ha_state()
+
+        entry_data["update_target_device_select_callback"] = _refresh
+
+    def _update_options(self) -> None:
+        saved = self.entry_data.get("saved_codes", {})
+        dev_names = set()
+        for k, v in saved.items():
+            if isinstance(v, dict) and v.get("device"):
+                dev_names.add(v["device"].strip())
+            elif " - " in k:
+                dev_names.add(k.split(" - ", 1)[0].strip())
+
+        # Include Ceiling Fan by default if no devices yet
+        if not dev_names:
+            dev_names.add("Ceiling Fan")
+
+        opts = sorted(list(dev_names))
+        opts.append("New Device (Use Text Below)")
+        self._attr_options = opts
+
+    @property
+    def current_option(self) -> str:
+        current = self.entry_data.get("target_device_input", "Ceiling Fan")
+        if current in self._attr_options:
+            return current
+        return "New Device (Use Text Below)"
+
+    async def async_select_option(self, option: str) -> None:
+        self._selected = option
+        if option != "New Device (Use Text Below)":
+            self.entry_data["target_device_input"] = option
+            if "update_target_device_text_callback" in self.entry_data:
+                try:
+                    self.entry_data["update_target_device_text_callback"](option)
+                except Exception:
+                    pass
+        self.async_write_ha_state()
+
+
 class Esp32DeleteSelect(SelectEntity):
     """Selector to choose which learned RF command to delete."""
 
     _attr_has_entity_name = True
-    _attr_name = "Delete RF Command"
-    _attr_icon = "mdi:trash-can-outline"
+    _attr_name = "Step 1: Select RF Command to Delete"
+    _attr_icon = "mdi:format-list-checks"
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, entry_data: dict[str, Any]) -> None:
         self.hass = hass
@@ -186,10 +255,10 @@ class Esp32DeleteSelect(SelectEntity):
         self.entry_data = entry_data
         self._attr_unique_id = f"esp32_cc1101_delete_select_{entry.entry_id}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_learned_commands")},
-            name=f"ESP32 CC1101 Learned Remotes ({entry.data.get(CONF_PORT, 'USB')})",
+            identifiers={(DOMAIN, f"{entry.entry_id}_learner")},
+            name=f"ESP32 CC1101 RF Learner ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / ESP32",
-            model="RF Stored Commands",
+            model="RF Learning Studio",
             via_device=(DOMAIN, entry.entry_id),
         )
         self._selected = "None"
@@ -200,7 +269,8 @@ class Esp32DeleteSelect(SelectEntity):
             if self._selected not in self._attr_options:
                 self._selected = "None"
             self.entry_data["delete_target_name"] = self._selected
-            self.async_write_ha_state()
+            if getattr(self, "hass", None) is not None:
+                self.async_write_ha_state()
 
         entry_data["update_delete_select_callback"] = _refresh
         entry_data["delete_target_name"] = self._selected
@@ -213,7 +283,7 @@ class Esp32DeleteSelect(SelectEntity):
             from homeassistant.helpers import entity_registry as er
             ent_reg = er.async_get(self.hass)
             prefix = f"esp32_cc1101_cmd_{self.entry.entry_id}_"
-            for ent_id, ent_entry in ent_reg.entities.items():
+            for ent_entry in list(ent_reg.entities.values()):
                 if ent_entry.config_entry_id == self.entry.entry_id and ent_entry.unique_id.startswith(prefix):
                     if ent_entry.original_name:
                         names.add(ent_entry.original_name)

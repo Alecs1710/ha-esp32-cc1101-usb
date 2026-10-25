@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.storage import Store
 
 from .client import Esp32Cc1101Client
@@ -45,7 +46,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["remote", "sensor", "select", "number", "button", "update", "text"]
+PLATFORMS = ["remote", "sensor", "select", "number", "button", "update"]
 
 SERVICE_SEND_RAW_SCHEMA = vol.Schema(
     {
@@ -83,6 +84,7 @@ SERVICE_SET_CONFIG_SCHEMA = vol.Schema(
 SERVICE_LEARN_COMMAND_SCHEMA = vol.Schema(
     {
         vol.Required("name"): cv.string,
+        vol.Optional("device"): cv.string,
         vol.Optional("config_entry_id"): cv.string,
     }
 )
@@ -228,8 +230,63 @@ def _get_entry_data(
     raise HomeAssistantError("No active ESP32 CC1101 USB connection available")
 
 
+def find_saved_command(
+    hass: HomeAssistant,
+    entry_id: str,
+    query: str,
+) -> tuple[str | None, Any | None]:
+    """Find a saved RF command by key, friendly name, entity_id, or slug, resilient to renaming."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id, {})
+    saved = entry_data.get("saved_codes", {})
+    query = query.strip()
+    if not query:
+        return None, None
+
+    # 1. Exact match in saved_codes
+    if query in saved:
+        return query, saved[query]
+
+    # 2. Case-insensitive or slug match
+    query_lower = query.lower()
+    query_slug = query_lower.replace(" ", "_")
+    for k, v in saved.items():
+        k_lower = k.lower()
+        if k_lower == query_lower or k_lower.replace(" ", "_") == query_slug:
+            return k, v
+
+    # 3. Match without device prefix (e.g. query is "Speed 1" and stored is "Ceiling Fan - Speed 1")
+    for k, v in saved.items():
+        if " - " in k:
+            short_k = k.split(" - ", 1)[1].strip().lower()
+            if short_k == query_lower or short_k.replace(" ", "_") == query_slug:
+                return k, v
+
+    # 4. Search Home Assistant's Entity Registry
+    # This ensures user renaming the button or changing entity_id never breaks finding the code!
+    try:
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(hass)
+        prefix = f"esp32_cc1101_cmd_{entry_id}_"
+        for ent in list(ent_reg.entities.values()):
+            if ent.config_entry_id == entry_id and ent.platform == DOMAIN:
+                if (
+                    ent.entity_id == query
+                    or (ent.name and ent.name.lower() == query_lower)
+                    or (ent.original_name and ent.original_name.lower() == query_lower)
+                ):
+                    if ent.unique_id.startswith(prefix):
+                        ent_slug = ent.unique_id[len(prefix):]
+                        for k, v in saved.items():
+                            if k.lower().replace(" ", "_") == ent_slug:
+                                return k, v
+    except Exception as err:
+        _LOGGER.debug("Entity registry lookup notice: %s", err)
+
+    return None, None
+
+
 async def async_start_learning_flow(
-    hass: HomeAssistant, entry_id: str, name: str
+    hass: HomeAssistant, entry_id: str, name: str, device_name: str | None = None
 ) -> None:
     """Start RF learning flow for a given command name."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
@@ -239,10 +296,12 @@ async def async_start_learning_flow(
     if not name:
         raise HomeAssistantError("Command name cannot be empty")
 
+    dev = (device_name or "Ceiling Fan").strip()
     prev_mode = entry_data["client"].rx_mode
     entry_data["learning"] = {
         "active": True,
         "name": name,
+        "device": dev,
         "samples": [],
         "decoded_samples": [],
         "last_sample_time": 0.0,
@@ -250,17 +309,25 @@ async def async_start_learning_flow(
     }
     await entry_data["client"].async_set_config(rx_mode="Learn Mode")
     _LOGGER.info(
-        "Starting RF learning mode for command '%s' (press remote button %d times)",
+        "Starting RF learning mode for '%s' - '%s' (press remote button %d times)",
+        dev,
         name,
         LEARN_STEPS,
     )
 
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
+        except Exception:
+            pass
+
+    display_label = f"{dev} - {name}" if dev else name
     persistent_notification.async_create(
         hass,
-        f"Ready to learn **{name}**.\n\n"
+        f"Ready to learn **{display_label}**.\n\n"
         f"Please press the button on your physical remote **{LEARN_STEPS} times** "
         f"(pause 1 second between presses).",
-        title=f"Learning RF Code: {name} (0/{LEARN_STEPS})",
+        title=f"Learning RF Code: {display_label} (0/{LEARN_STEPS})",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
     )
 
@@ -280,6 +347,11 @@ async def async_cancel_learning_flow(
         persistent_notification.async_dismiss(
             hass, notification_id=f"{DOMAIN}_learning_{entry_id}"
         )
+        if "update_learning_sensor_callback" in entry_data:
+            try:
+                entry_data["update_learning_sensor_callback"]()
+            except Exception:
+                pass
         _LOGGER.info("RF learning mode cancelled for entry %s", entry_id)
 
 
@@ -296,18 +368,13 @@ async def async_delete_command_flow(
 
     saved = entry_data.get("saved_codes", {})
 
-    # Match in saved_codes (exact, case-insensitive, or slug)
-    matched_key = None
-    if name in saved:
+    # Match in saved_codes using find_saved_command for total resilience to renaming
+    matched_key, _ = find_saved_command(hass, entry_id, name)
+    if not matched_key and name in saved:
         matched_key = name
-    else:
-        for k in list(saved.keys()):
-            if k.lower() == name.lower() or k.lower().replace(" ", "_") == name.lower().replace(" ", "_"):
-                matched_key = k
-                break
 
     if matched_key:
-        del saved[matched_key]
+        saved.pop(matched_key, None)
         await entry_data["store"].async_save(saved)
         _LOGGER.info("Deleted saved RF command '%s' from storage for entry %s", matched_key, entry_id)
 
@@ -320,7 +387,9 @@ async def async_delete_command_flow(
 
     # 2. Comprehensive cleanup of Home Assistant Entity Registry
     # Handles disabled entities, renamed entity_ids, and orphaned registry entries!
-    slug = (matched_key or name).lower().replace(" ", "_")
+    effective_name = matched_key or name
+    slug = effective_name.lower().replace(" ", "_")
+    short_slug = (effective_name.split(" - ", 1)[1] if " - " in effective_name else effective_name).lower().replace(" ", "_")
     target_unique_id = f"esp32_cc1101_cmd_{entry_id}_{slug}"
     purged_count = 0
 
@@ -328,16 +397,20 @@ async def async_delete_command_flow(
         from homeassistant.helpers import entity_registry as er
         ent_reg = er.async_get(hass)
         entries_to_remove = []
-        for ent_id, ent_entry in list(ent_reg.entities.items()):
+        for ent_entry in list(ent_reg.entities.values()):
             if ent_entry.config_entry_id == entry_id and ent_entry.platform == DOMAIN:
                 if (
                     ent_entry.unique_id == target_unique_id
-                    or ent_entry.original_name == (matched_key or name)
-                    or ent_entry.name == (matched_key or name)
-                    or ent_entry.entity_id == name
                     or ent_entry.unique_id.endswith(f"_{slug}")
+                    or ent_entry.unique_id.endswith(f"_{short_slug}")
+                    or ent_entry.original_name == effective_name
+                    or ent_entry.name == effective_name
+                    or (ent_entry.original_name and ent_entry.original_name.lower() == effective_name.lower())
+                    or (ent_entry.name and ent_entry.name.lower() == effective_name.lower())
+                    or ent_entry.entity_id == name
+                    or ent_entry.entity_id.endswith(f"_{short_slug}")
                 ):
-                    entries_to_remove.append(ent_id)
+                    entries_to_remove.append(ent_entry.entity_id)
 
         for ent_id in entries_to_remove:
             ent_reg.async_remove(ent_id)
@@ -349,10 +422,16 @@ async def async_delete_command_flow(
     if not matched_key and purged_count == 0:
         raise HomeAssistantError(f"RF command '{name}' was not found in storage or registry")
 
-    # 3. Notify select entity to update available choices
+    # 3. Notify callbacks
     if "update_delete_select_callback" in entry_data:
         try:
             entry_data["update_delete_select_callback"]()
+        except Exception:
+            pass
+
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
         except Exception:
             pass
 
@@ -362,6 +441,92 @@ async def async_delete_command_flow(
         title=f"Deleted RF Command: {name}",
         notification_id=f"{DOMAIN}_deleted_{entry_id}_{slug}",
     )
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: dr.DeviceEntry
+) -> bool:
+    """Remove a learned device and all its stored RF codes when deleted by user in HA."""
+    entry_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    if not entry_data:
+        return True
+
+    # Disallow deleting the core USB bridge
+    root_id = (DOMAIN, config_entry.entry_id)
+    if root_id in device_entry.identifiers:
+        return False
+
+    dev_name = device_entry.name or ""
+    saved = entry_data.get("saved_codes", {})
+    keys_to_delete: set[str] = set()
+
+    # 1. Match codes via all entities registered to this device (immune to user renaming!)
+    try:
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(hass)
+        entries_for_device = er.async_entries_for_device(ent_reg, device_entry.id)
+        prefix = f"esp32_cc1101_cmd_{config_entry.entry_id}_"
+        for ent_entry in entries_for_device:
+            if ent_entry.unique_id.startswith(prefix):
+                ent_slug = ent_entry.unique_id[len(prefix):]
+                for key in saved:
+                    if key.lower().replace(" ", "_") == ent_slug:
+                        keys_to_delete.add(key)
+    except Exception as err:
+        _LOGGER.debug("Error mapping device entities for deletion: %s", err)
+
+    # 2. Match codes via device identifier slug
+    for ident_domain, ident_val in device_entry.identifiers:
+        if ident_domain == DOMAIN and f"{config_entry.entry_id}_dev_" in ident_val:
+            orig_dev_slug = ident_val.split(f"{config_entry.entry_id}_dev_", 1)[1]
+            for key, code_val in saved.items():
+                stored_dev = code_val.get("device", "") if isinstance(code_val, dict) else (key.split(" - ", 1)[0] if " - " in key else "")
+                if stored_dev.lower().replace(" ", "_") == orig_dev_slug:
+                    keys_to_delete.add(key)
+
+    # 3. Match codes via name/stored_dev string as fallback
+    for key, code_val in saved.items():
+        stored_dev = code_val.get("device", "") if isinstance(code_val, dict) else (key.split(" - ", 1)[0] if " - " in key else "")
+        if (
+            (stored_dev and stored_dev.lower() == dev_name.lower())
+            or key.lower().startswith(f"{dev_name.lower()} - ")
+            or key.lower() == dev_name.lower()
+        ):
+            keys_to_delete.add(key)
+
+    for k in keys_to_delete:
+        saved.pop(k, None)
+        _LOGGER.info("Deleted code '%s' due to device '%s' removal", k, dev_name)
+
+    await entry_data["store"].async_save(saved)
+
+    # Remove in-memory button entities
+    if entry_data.get("remove_button_callback"):
+        for k in keys_to_delete:
+            try:
+                await entry_data["remove_button_callback"](k)
+            except Exception as err:
+                _LOGGER.debug("Could not remove button for '%s': %s", k, err)
+
+    # Purge all entity registry entries attached to this device
+    try:
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(hass)
+        entries_for_device = er.async_entries_for_device(ent_reg, device_entry.id)
+        for e in entries_for_device:
+            ent_reg.async_remove(e.entity_id)
+            _LOGGER.info("Purged entity registry entry '%s' for deleted device '%s'", e.entity_id, dev_name)
+    except Exception as err:
+        _LOGGER.warning("Could not purge entities for deleted device '%s': %s", dev_name, err)
+
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
+        except Exception:
+            pass
+
+    _LOGGER.info("Successfully removed device '%s' and purged %d RF codes", dev_name, len(keys_to_delete))
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -448,17 +613,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def async_learn_command_service(call: ServiceCall) -> None:
             entry_id, _ = _get_entry_data(hass, call.data.get("config_entry_id"))
             name = call.data["name"].strip()
-            await async_start_learning_flow(hass, entry_id, name)
+            device = call.data.get("device")
+            await async_start_learning_flow(hass, entry_id, name, device)
 
         async def async_send_command_service(call: ServiceCall) -> None:
-            _, data = _get_entry_data(hass, call.data.get("config_entry_id"))
+            entry_id, data = _get_entry_data(hass, call.data.get("config_entry_id"))
             name = call.data["name"].strip()
-            saved = data.get("saved_codes", {})
-            if name not in saved:
+            matched_key, cmd_data = find_saved_command(hass, entry_id, name)
+            if not cmd_data:
                 raise HomeAssistantError(f"Saved RF command '{name}' not found")
-            cmd_data = saved[name]
             repeats = call.data.get("repeats")
-            _LOGGER.info("Transmitting saved RF command '%s'", name)
+            _LOGGER.info("Transmitting saved RF command '%s' (matched '%s')", name, matched_key)
             if isinstance(cmd_data, dict) and "code" in cmd_data:
                 await data["client"].async_send_code(
                     code=cmd_data["code"],
@@ -574,14 +739,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         f"esp32_cc1101_sensitivity_{entry.entry_id}",
         f"esp32_cc1101_min_repeats_{entry.entry_id}",
     }
+    obsolete_entity_prefixes = (
+        f"esp32_cc1101_target_device_{entry.entry_id}",
+        f"esp32_cc1101_learn_name_{entry.entry_id}",
+        f"esp32_cc1101_target_dev_select_{entry.entry_id}",
+        f"esp32_cc1101_delete_select_{entry.entry_id}",
+        f"esp32_cc1101_confirm_delete_{entry.entry_id}",
+        f"esp32_cc1101_learn_start_{entry.entry_id}",
+        f"esp32_cc1101_learn_cancel_{entry.entry_id}",
+    )
 
     for reg_entry in existing_entries:
-        # Purge any obsolete/duplicate buttons (e.g. old ping, reset, flash, or duplicate repeat button)
-        if reg_entry.domain == "button":
+        # Purge obsolete learner entities
+        if any(reg_entry.unique_id.startswith(p) for p in obsolete_entity_prefixes):
+            _LOGGER.info("Purging obsolete learner entity from registry: %s", reg_entry.entity_id)
+            ent_reg.async_remove(reg_entry.entity_id)
+        # Purge any obsolete/duplicate buttons
+        elif reg_entry.domain == "button":
             if reg_entry.unique_id != valid_repeat_button and not reg_entry.unique_id.startswith(valid_button_prefix):
                 _LOGGER.info("Purging obsolete button from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
                 ent_reg.async_remove(reg_entry.entity_id)
-        # Purge obsolete numbers (e.g. old frequency number slider)
+        # Purge obsolete numbers
         elif reg_entry.domain == "number":
             if reg_entry.unique_id not in valid_numbers:
                 _LOGGER.info("Purging obsolete number from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
@@ -627,21 +805,29 @@ async def _handle_learning_sample(
 
     count = len(learning["samples"])
     cmd_name = learning["name"]
+    dev_name = learning.get("device", "").strip()
+    display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
 
     _LOGGER.info(
         "Captured learning repetition %d/%d for '%s' (%d pulses)",
         count,
         LEARN_STEPS,
-        cmd_name,
+        display_label,
         len(pulse_parts),
     )
+
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
+        except Exception:
+            pass
 
     if count < LEARN_STEPS:
         persistent_notification.async_create(
             hass,
-            f"Captured repetition **{count} of {LEARN_STEPS}** for `{cmd_name}`.\n\n"
+            f"Captured repetition **{count} of {LEARN_STEPS}** for `{display_label}`.\n\n"
             f"Please press the remote button again ({LEARN_STEPS - count} remaining).",
-            title=f"Learning RF Code: {cmd_name} ({count}/{LEARN_STEPS})",
+            title=f"Learning RF Code: {display_label} ({count}/{LEARN_STEPS})",
             notification_id=f"{DOMAIN}_learning_{entry_id}",
         )
     else:
@@ -653,28 +839,63 @@ async def _handle_learning_sample(
         client: Esp32Cc1101Client = entry_data["client"]
         hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
 
-        entry_data["saved_codes"][cmd_name] = result_code
+        full_cmd_name = display_label
+        if isinstance(result_code, dict):
+            result_code["device"] = dev_name
+            result_code["command"] = cmd_name
+        else:
+            result_code = {
+                "type": "raw",
+                "raw": result_code,
+                "device": dev_name,
+                "command": cmd_name,
+            }
+
+        entry_data["saved_codes"][full_cmd_name] = result_code
         await entry_data["store"].async_save(entry_data["saved_codes"])
-        _LOGGER.info("Saved learned RF command '%s' after %d repetitions (%s)", cmd_name, LEARN_STEPS, desc)
+        _LOGGER.info("Saved learned RF command '%s' after %d repetitions (%s)", full_cmd_name, LEARN_STEPS, desc)
 
         if entry_data.get("add_button_callback"):
-            entry_data["add_button_callback"](cmd_name)
+            entry_data["add_button_callback"](full_cmd_name)
 
         if "update_delete_select_callback" in entry_data:
-            entry_data["update_delete_select_callback"]()
+            try:
+                entry_data["update_delete_select_callback"]()
+            except Exception:
+                pass
 
-        next_count = len(entry_data["saved_codes"]) + 1
-        next_name = f"Remote Button {next_count}"
-        entry_data["learn_name_input"] = next_name
+        if "update_target_device_callback" in entry_data:
+            try:
+                entry_data["update_target_device_callback"]()
+            except Exception:
+                pass
+
+        if "update_target_device_select_callback" in entry_data:
+            try:
+                entry_data["update_target_device_select_callback"]()
+            except Exception:
+                pass
+
+        if "update_learning_sensor_callback" in entry_data:
+            try:
+                entry_data["update_learning_sensor_callback"]()
+            except Exception:
+                pass
+
+        # Reset command name input to empty to force user to specify next name
+        entry_data["learn_name_input"] = ""
         if "update_learn_name_callback" in entry_data:
-            entry_data["update_learn_name_callback"](next_name)
+            try:
+                entry_data["update_learn_name_callback"]("")
+            except Exception:
+                pass
 
         persistent_notification.async_create(
             hass,
-            f"Successfully learned and confirmed **{cmd_name}** after {LEARN_STEPS} repetitions!\n\n"
+            f"Successfully learned and confirmed **{display_label}** after {LEARN_STEPS} repetitions!\n\n"
             f"{desc}\n\n"
-            f"A button entity for **{cmd_name}** has been added to your dashboard.",
-            title=f"RF Code Learned: {cmd_name}",
+            f"A button entity for **{cmd_name}** has been added to your dashboard under device **{dev_name or 'Learned Remotes'}**.",
+            title=f"RF Code Learned: {display_label}",
             notification_id=f"{DOMAIN}_learning_{entry_id}",
         )
 

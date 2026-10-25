@@ -237,7 +237,6 @@ class Esp32LearningSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Learning Status"
     _attr_icon = "mdi:remote"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self, hass: HomeAssistant, entry: ConfigEntry, client: Esp32Cc1101Client
@@ -255,10 +254,12 @@ class Esp32LearningSensor(SensorEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Register client listener."""
+        """Register client listener and learning update callback."""
         self.async_on_remove(
             self.client.register_listener(self._handle_client_update)
         )
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self.entry.entry_id, {})
+        entry_data["update_learning_sensor_callback"] = self.async_write_ha_state
 
     def _handle_client_update(self, data: dict[str, Any]) -> None:
         self.async_write_ha_state()
@@ -268,10 +269,14 @@ class Esp32LearningSensor(SensorEntity):
         """Return learning state."""
         entry_data = self.hass.data.get(DOMAIN, {}).get(self.entry.entry_id, {})
         learning = entry_data.get("learning", {})
+        if learning.get("status"):
+            return str(learning["status"])
         if learning.get("active"):
             count = len(learning.get("samples", []))
             name = learning.get("name", "")
-            return f"Learning '{name}' ({count}/{LEARN_STEPS} presses)"
+            dev = learning.get("device", "")
+            label = f"{dev} - {name}" if dev else name
+            return f"Learning '{label}' ({count}/{LEARN_STEPS} presses)"
 
         saved_count = len(entry_data.get("saved_codes", {}))
         return f"Idle ({saved_count} saved)"

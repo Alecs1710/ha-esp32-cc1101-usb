@@ -30,9 +30,6 @@ async def async_setup_entry(
 
     entities: list[ButtonEntity] = [
         Esp32RepeatButton(entry, client),
-        Esp32StartLearnButton(hass, entry, client, entry_data),
-        Esp32CancelLearnButton(hass, entry, client, entry_data),
-        Esp32ConfirmDeleteButton(hass, entry, client, entry_data),
     ]
     created_command_entities: dict[str, Esp32SavedCommandButton] = {}
 
@@ -131,12 +128,13 @@ class Esp32StartLearnButton(ButtonEntity):
     async def async_press(self) -> None:
         """Start the learning sequence."""
         from . import async_start_learning_flow
-        target_name = self.entry_data.get("learn_name_input")
-        if not target_name or not target_name.strip():
+        dev_name = self.entry_data.get("target_device_input", "Ceiling Fan").strip()
+        target_name = self.entry_data.get("learn_name_input", "").strip()
+        if not target_name:
             count = len(self.entry_data.get("saved_codes", {})) + 1
-            target_name = f"Remote Button {count}"
+            target_name = f"Button {count}"
 
-        await async_start_learning_flow(self.hass, self.entry.entry_id, target_name.strip())
+        await async_start_learning_flow(self.hass, self.entry.entry_id, target_name, dev_name)
 
 
 class Esp32CancelLearnButton(ButtonEntity):
@@ -176,7 +174,7 @@ class Esp32ConfirmDeleteButton(ButtonEntity):
     """Button to confirm deletion of the selected learned RF command."""
 
     _attr_has_entity_name = True
-    _attr_name = "Confirm Delete Command"
+    _attr_name = "Step 2: Confirm Delete Command"
     _attr_icon = "mdi:delete-alert"
 
     def __init__(
@@ -192,10 +190,10 @@ class Esp32ConfirmDeleteButton(ButtonEntity):
         self.entry_data = entry_data
         self._attr_unique_id = f"esp32_cc1101_confirm_delete_{entry.entry_id}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_learned_commands")},
-            name=f"ESP32 CC1101 Learned Remotes ({entry.data.get(CONF_PORT, 'USB')})",
+            identifiers={(DOMAIN, f"{entry.entry_id}_learner")},
+            name=f"ESP32 CC1101 RF Learner ({entry.data.get(CONF_PORT, 'USB')})",
             manufacturer="Texas Instruments / ESP32",
-            model="RF Stored Commands",
+            model="RF Learning Studio",
             via_device=(DOMAIN, entry.entry_id),
         )
 
@@ -204,7 +202,7 @@ class Esp32ConfirmDeleteButton(ButtonEntity):
         target = self.entry_data.get("delete_target_name", "None")
         if not target or target == "None":
             raise HomeAssistantError(
-                "Please choose an RF command from the 'Delete RF Command' dropdown before clicking Confirm Delete."
+                "Please choose an RF command from the 'Step 1: Select RF Command to Delete' dropdown before clicking Step 2: Confirm Delete."
             )
 
         from . import async_delete_command_flow
@@ -229,14 +227,33 @@ class Esp32SavedCommandButton(ButtonEntity):
         self.client = client
         self._command_name = command_name
         self._entry_data = entry_data
-        slug = command_name.lower().replace(" ", "_")
-        self._attr_name = f"{command_name}"
-        self._attr_unique_id = f"esp32_cc1101_cmd_{entry.entry_id}_{slug}"
+
+        saved_codes = entry_data.get("saved_codes", {})
+        code_data = saved_codes.get(command_name)
+
+        dev_name = ""
+        short_cmd = command_name
+        if isinstance(code_data, dict) and code_data.get("device"):
+            dev_name = code_data["device"].strip()
+            short_cmd = code_data.get("command", command_name).strip()
+        elif " - " in command_name:
+            dev_name, short_cmd = command_name.split(" - ", 1)
+            dev_name = dev_name.strip()
+            short_cmd = short_cmd.strip()
+
+        if not dev_name:
+            dev_name = "Learned Remotes"
+
+        slug_dev = dev_name.lower().replace(" ", "_")
+        slug_full = command_name.lower().replace(" ", "_")
+
+        self._attr_name = short_cmd
+        self._attr_unique_id = f"esp32_cc1101_cmd_{entry.entry_id}_{slug_full}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_learned_commands")},
-            name=f"ESP32 CC1101 Learned Remotes ({entry.data.get(CONF_PORT, 'USB')})",
-            manufacturer="Texas Instruments / ESP32",
-            model="RF Stored Commands",
+            identifiers={(DOMAIN, f"{entry.entry_id}_dev_{slug_dev}")},
+            name=dev_name,
+            manufacturer="ESP32 CC1101 RF",
+            model="Learned RF Device",
             via_device=(DOMAIN, entry.entry_id),
         )
 
@@ -244,6 +261,9 @@ class Esp32SavedCommandButton(ButtonEntity):
         """Transmit saved RF command."""
         saved_codes = self._entry_data.get("saved_codes", {})
         code = saved_codes.get(self._command_name)
+        if not code:
+            from . import find_saved_command
+            _, code = find_saved_command(self.hass, self.entry.entry_id, self._command_name)
         if not code:
             raise HomeAssistantError(
                 f"Command '{self._command_name}' no longer exists in storage"

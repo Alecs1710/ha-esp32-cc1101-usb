@@ -250,12 +250,121 @@ class Esp32Cc1101ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for live tuning of frequency, power, and modulation."""
+    """Handle options flow for creating devices, learning buttons, and tuning radio parameters."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage the ESP32 CC1101 options."""
+        """Show the configuration studio menu."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["add_device_or_button", "delete_command", "radio_settings"],
+        )
+
+    async def async_step_add_device_or_button(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Modal popup step to create a device and learn a button."""
+        errors: dict[str, str] = {}
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+
+        # Collect existing devices from saved codes
+        existing_devices: set[str] = set()
+        for k, v in saved.items():
+            if isinstance(v, dict) and v.get("device"):
+                existing_devices.add(v["device"].strip())
+            elif " - " in k:
+                existing_devices.add(k.split(" - ", 1)[0].strip())
+
+        dev_list = sorted(list(existing_devices))
+        options_list = dev_list + ["+ Create New Device"]
+        default_dev = dev_list[0] if dev_list else "+ Create New Device"
+
+        if user_input is not None:
+            chosen_dev = user_input.get("target_device")
+            new_dev = user_input.get("new_device_name", "").strip()
+            button_name = user_input.get("button_name", "").strip()
+
+            if chosen_dev == "+ Create New Device" and not new_dev:
+                errors["new_device_name"] = "device_name_required"
+            elif not button_name:
+                errors["button_name"] = "button_name_required"
+            else:
+                final_dev = new_dev if chosen_dev == "+ Create New Device" else chosen_dev
+                from . import async_start_learning_flow
+                await async_start_learning_flow(
+                    self.hass, entry_id, button_name, final_dev
+                )
+                return self.async_create_entry(title="", data={})
+
+        schema = vol.Schema(
+            {
+                vol.Required("target_device", default=default_dev): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=d, label=d) for d in options_list
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional("new_device_name"): str,
+                vol.Required("button_name"): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="add_device_or_button",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_delete_command(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Modal popup step to delete a learned RF button."""
+        errors: dict[str, str] = {}
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+
+        if user_input is not None:
+            cmd = user_input.get("command_to_delete")
+            if not cmd or cmd == "None":
+                errors["command_to_delete"] = "command_required"
+            else:
+                from . import async_delete_command_flow
+                await async_delete_command_flow(self.hass, entry_id, cmd)
+                return self.async_create_entry(title="", data={})
+
+        cmd_options = sorted(list(saved.keys()))
+        if not cmd_options:
+            cmd_options = ["None"]
+
+        schema = vol.Schema(
+            {
+                vol.Required("command_to_delete", default=cmd_options[0]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=c, label=c) for c in cmd_options
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="delete_command",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_radio_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage CC1101 live radio tuning."""
         if user_input is not None:
             freq_choice = user_input.get(CONF_FREQUENCY)
             if freq_choice in FREQUENCY_PRESET_MAP:
@@ -374,4 +483,4 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="radio_settings", data_schema=schema)

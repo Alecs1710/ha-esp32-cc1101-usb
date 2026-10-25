@@ -98,12 +98,13 @@ class Esp32Cc1101Remote(RemoteEntity):
         entry_data = self.hass.data[DOMAIN].get(self._entry_id, {})
         saved_codes = entry_data.get("saved_codes", {})
 
+        from . import find_saved_command
         for cmd in command:
             cmd_str = str(cmd).strip()
 
-            # Check if it's a saved command name
-            if cmd_str in saved_codes:
-                saved = saved_codes[cmd_str]
+            # Check if it's a saved command name (resilient to renaming)
+            matched_key, saved = find_saved_command(self.hass, self._entry_id, cmd_str)
+            if saved is not None:
                 if isinstance(saved, dict) and "code" in saved:
                     code_val = saved["code"]
                     if saved.get("type") == "rolling_code":

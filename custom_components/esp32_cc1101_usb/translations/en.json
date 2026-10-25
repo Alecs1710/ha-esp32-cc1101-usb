@@ -31,6 +31,31 @@
   "options": {
     "step": {
       "init": {
+        "title": "ESP32 CC1101 RF Studio",
+        "description": "Choose an action to configure devices, learn buttons, or tune radio settings.",
+        "menu_options": {
+          "add_device_or_button": "Add / Learn Button to Device",
+          "delete_command": "Delete Learned Button",
+          "radio_settings": "Radio Parameters & Tuning"
+        }
+      },
+      "add_device_or_button": {
+        "title": "Add / Learn RF Remote Button",
+        "description": "Choose a device (or create a new one) and enter the exact button name to learn. Once submitted, press your physical remote button 3 times.",
+        "data": {
+          "target_device": "Target Device",
+          "new_device_name": "New Device Name (if creating new)",
+          "button_name": "Button / Command Name"
+        }
+      },
+      "delete_command": {
+        "title": "Delete Learned RF Button",
+        "description": "Select a learned RF command to delete from storage and purge from Home Assistant.",
+        "data": {
+          "command_to_delete": "Command to Delete"
+        }
+      },
+      "radio_settings": {
         "title": "CC1101 Radio Parameters",
         "description": "Configure operating frequency, modulation mode, and RF power levels in real time.",
         "data": {
@@ -44,6 +69,11 @@
           "rx_mode": "RF Reception Mode"
         }
       }
+    },
+    "error": {
+      "device_name_required": "Please enter a name for the new device.",
+      "button_name_required": "Please enter a name for the button to learn.",
+      "command_required": "Please choose a command to delete."
     }
   },
   "entity": {
@@ -59,8 +89,11 @@
       "rx_mode": {
         "name": "RF Reception Mode"
       },
+      "target_dev_select": {
+        "name": "Select Target Device"
+      },
       "delete_select": {
-        "name": "Delete RF Command"
+        "name": "Step 1: Select RF Command to Delete"
       }
     },
     "button": {
@@ -74,12 +107,15 @@
         "name": "Cancel Learning"
       },
       "confirm_delete": {
-        "name": "Confirm Delete Command"
+        "name": "Step 2: Confirm Delete Command"
       }
     },
     "text": {
+      "target_device": {
+        "name": "Target Device Name"
+      },
       "learn_name": {
-        "name": "New RF Button Name"
+        "name": "Command Name to Learn"
       }
     }
   }
