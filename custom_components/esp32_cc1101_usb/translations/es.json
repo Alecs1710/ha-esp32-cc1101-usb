@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conectar ESP32 CC1101 USB",
+        "description": "Selecciona el puerto serie USB donde está conectado el transceptor ESP32 CC1101.",
+        "data": {
+          "port": "Puerto Serie USB",
+          "baudrate": "Velocidad en Baudios",
+          "frequency": "Frecuencia y Banda Hardware",
+          "modulation": "Modulación"
+        }
+      },
+      "usb_confirm": {
+        "title": "Transceptor ESP32 CC1101 Descubierto",
+        "description": "¿Deseas configurar el transceptor ESP32 CC1101 USB descubierto en `{device}`?",
+        "data": {
+          "baudrate": "Velocidad en Baudios",
+          "frequency": "Frecuencia y Banda Hardware",
+          "modulation": "Modulación"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se pudo conectar con el ESP32 en el puerto seleccionado."
+    },
+    "abort": {
+      "already_configured": "Este puerto serie ya está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ESP32 CC1101 RF Studio",
+        "description": "Elige una acción para gestionar dispositivos, aprender botones o ajustar la radio.",
+        "menu_options": {
+          "create_device": "➕ Crear Nuevo Dispositivo RF",
+          "learn_button": "🎯 Aprender Botón para Dispositivo",
+          "radio_settings": "⚙️ Parámetros de Radio CC1101"
+        }
+      },
+      "create_device": {
+        "title": "Crear Nuevo Dispositivo RF",
+        "description": "Introduce un nombre para el dispositivo que deseas controlar (ej: Ventilador Techo, Puerta Garaje, Persiana). Después podrás entrar a configurarlo para aprender sus botones.",
+        "data": {
+          "device_name": "Nombre del Dispositivo"
+        }
+      },
+      "device_learn_button": {
+        "title": "Aprender Botón RF: {device_name}",
+        "description": "Introduce el nombre del botón a aprender (ej: Velocidad 1, Apagar, Luz). Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
+        "data": {
+          "button_name": "Nombre del Botón / Comando"
+        }
+      },
+      "learn_button": {
+        "title": "Aprender Botón de Mando RF",
+        "description": "Selecciona el dispositivo de destino e introduce el nombre del botón a aprender. Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
+        "data": {
+          "target_device": "Dispositivo Destino",
+          "button_name": "Nombre del Botón / Comando"
+        }
+      },
+      "radio_settings": {
+        "title": "Parámetros de Radio CC1101",
+        "description": "Configura la frecuencia de operación, modulación y potencia RF en tiempo real.",
+        "data": {
+          "frequency": "Frecuencia de Operación",
+          "modulation": "Modulación",
+          "bandwidth": "Ancho de Banda de Filtro (kHz)",
+          "tx_power": "Potencia de Transmisión (dBm)",
+          "repeats": "Repeticiones de Transmisión por Defecto",
+          "min_rssi": "Sensibilidad del Receptor (Squelch dBm)",
+          "min_repeats": "Repeticiones Consecutivas Mínimas",
+          "rx_mode": "Modo de Recepción RF"
+        }
+      }
+    },
+    "error": {
+      "device_name_required": "Por favor introduce un nombre para el dispositivo.",
+      "button_name_required": "Por favor introduce un nombre para el botón a aprender."
+    }
+  }
+}

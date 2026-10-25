@@ -280,9 +280,23 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                         self._target_device = dev_name
                         return await self.async_step_device_learn_button()
 
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+        if is_es:
+            menu = {
+                "create_device": "➕ Crear Nuevo Dispositivo RF",
+                "learn_button": "🎯 Aprender Botón para Dispositivo",
+                "radio_settings": "⚙️ Parámetros de Radio CC1101",
+            }
+        else:
+            menu = {
+                "create_device": "➕ Create New RF Device",
+                "learn_button": "🎯 Learn Button for Existing Device",
+                "radio_settings": "⚙️ CC1101 Radio Parameters & Tuning",
+            }
+
         return self.async_show_menu(
             step_id="init",
-            menu_options=["create_device", "learn_button", "radio_settings"],
+            menu_options=menu,
         )
 
     async def async_step_device_learn_button(
