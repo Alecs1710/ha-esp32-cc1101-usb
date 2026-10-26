@@ -354,6 +354,14 @@ class Esp32Cc1101Client:
 
         # Raw RF pulse train captured
         if event == "rx_raw" or "raw" in payload:
+            now_ts = time.time()
+            if (now_ts - self._last_rx_burst_time) < 0.500:
+                _LOGGER.debug(
+                    "Suppressing trailing rx_raw burst (%.3fs after decoded rx_code burst)",
+                    now_ts - self._last_rx_burst_time,
+                )
+                return
+
             raw_str = payload.get("raw", "")
             self.last_code = raw_str
             self.last_rssi = payload.get("rssi")

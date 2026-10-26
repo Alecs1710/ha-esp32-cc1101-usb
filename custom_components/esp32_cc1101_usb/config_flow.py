@@ -651,10 +651,9 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                     return
                 event_type = event_data.get("type")
                 if event_type in ("rx_code", "rx_raw"):
-                    raw = client.last_code or ""
                     payload = event_data.get("payload", {})
                     rx_code = payload.get("code")
-                    rx_raw = raw or payload.get("raw") or ""
+                    rx_raw = payload.get("raw") or ""
 
                     cand = self._candidate_code
                     is_match = False
@@ -662,19 +661,34 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                         cand_code = cand.get("code")
                         if cand_code is not None and rx_code is not None and _codes_match(cand_code, rx_code):
                             is_match = True
-                        elif cand.get("type") == "rolling_code":
+                        elif cand.get("type") == "rolling_code" and rx_code is not None:
                             base_id = cand.get("base_id")
                             try:
                                 rx_int = int(rx_code)
                                 if base_id and (rx_int >> 8) == int(base_id):
                                     is_match = True
+                                    cand["code"] = rx_int
                             except (ValueError, TypeError):
                                 pass
-                        elif rx_raw and cand.get("raw"):
-                            if _compare_raw_pulses(rx_raw, cand["raw"]) >= 0.80:
+                        elif cand_code is not None and rx_code is not None:
+                            try:
+                                rx_int = int(rx_code)
+                                cand_int = int(cand_code)
+                                if (rx_int >> 8) == (cand_int >> 8):
+                                    is_match = True
+                                    cand["type"] = "rolling_code"
+                                    cand["base_id"] = rx_int >> 8
+                                    cand["delta"] = 15
+                                    cand["code"] = rx_int
+                            except (ValueError, TypeError):
+                                pass
+
+                        # Only use raw pulse correlation if rx_code was NOT decoded
+                        if not is_match and rx_code is None and rx_raw and cand.get("raw"):
+                            if _compare_raw_pulses(rx_raw, cand["raw"]) >= 0.85:
                                 is_match = True
-                    elif isinstance(cand, str) and rx_raw:
-                        if _compare_raw_pulses(rx_raw, cand) >= 0.80:
+                    elif isinstance(cand, str) and rx_code is None and rx_raw:
+                        if _compare_raw_pulses(rx_raw, cand) >= 0.85:
                             is_match = True
 
                     if is_match:

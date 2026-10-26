@@ -210,7 +210,7 @@ def _analyze_learning_consensus(
                     deltas = [unique_ordered[i + 1] - unique_ordered[i] for i in range(len(unique_ordered) - 1)]
                     delta_counts = Counter(deltas)
                     common_delta, delta_freq = delta_counts.most_common(1)[0]
-                    if delta_freq >= len(deltas) * 0.6 and common_delta > 0:
+                    if delta_freq >= len(deltas) * 0.6 and 0 < common_delta <= 256:
                         latest_code = unique_ordered[-1]
                         base_id = latest_code >> 8
                         desc = (
@@ -230,6 +230,26 @@ def _analyze_learning_consensus(
 
                 most_common_code, code_count = Counter(codes).most_common(1)[0]
                 if code_count >= 3:
+                    # Check for 32-bit counter rolling code signature (4-bit counter + 4-bit inverted checksum == 7)
+                    if dominant_bits == 32:
+                        b = most_common_code & 0xFF
+                        if (((b >> 4) & 0x0F) + (b & 0x0F)) == 7:
+                            base_id = most_common_code >> 8
+                            desc = (
+                                f"Decoded Rolling Code "
+                                f"(Base: 0x{base_id:06X}, Step: +15, 32b, Proto {proto})"
+                            )
+                            return {
+                                "type": "rolling_code",
+                                "code": most_common_code,
+                                "base_id": base_id,
+                                "delta": 15,
+                                "bits": dominant_bits,
+                                "protocol": proto,
+                                "pulse_length": pulse_len,
+                                "raw": rep_raw,
+                            }, desc
+
                     desc = (
                         f"Decoded Protocol "
                         f"(Code: {most_common_code}, {dominant_bits}b, Proto {proto}, {code_count} frames)"
@@ -1348,19 +1368,32 @@ async def _handle_learning_sample(
                         rx_int = int(rx_code)
                         if base_id and (rx_int >> 8) == int(base_id):
                             matched = True
+                            candidate["code"] = rx_int
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    try:
+                        rx_int = int(rx_code)
+                        cand_int = int(cand_code)
+                        if (rx_int >> 8) == (cand_int >> 8):
+                            matched = True
+                            candidate["type"] = "rolling_code"
+                            candidate["base_id"] = rx_int >> 8
+                            candidate["delta"] = 15
+                            candidate["code"] = rx_int
                     except (ValueError, TypeError):
                         pass
 
-            # 2. Match by raw pulse correlation if code didn't match or not decoded
-            if not matched and rx_raw:
+            # 2. Match by raw pulse correlation ONLY if rx_code was NOT decoded
+            if not matched and rx_code is None and rx_raw:
                 cand_raw = candidate.get("raw", "")
                 if cand_raw:
                     score = _compare_raw_pulses(rx_raw, cand_raw)
-                    if score >= 0.80:
+                    if score >= 0.85:
                         matched = True
-        elif isinstance(candidate, str) and rx_raw:
+        elif isinstance(candidate, str) and rx_code is None and rx_raw:
             score = _compare_raw_pulses(rx_raw, candidate)
-            if score >= 0.80:
+            if score >= 0.85:
                 matched = True
 
         if matched:
@@ -1383,39 +1416,66 @@ def _handle_passive_rf_receive(
     saved_codes = entry_data.get("saved_codes", {})
     payload = data.get("payload", {})
     rx_code = payload.get("code")
-    rx_raw = payload.get("raw") or client.last_code or ""
+    rx_raw = payload.get("raw") or ""
 
     matched_key: str | None = None
     matched_data: dict[str, Any] | str | None = None
 
-    # 1. Try matching by decoded code (EV1527, PT2262, fixed, rolling codes)
+    # 1. Matching by decoded code (EV1527, PT2262, fixed, rolling codes)
     if rx_code is not None:
+        try:
+            rx_int = int(rx_code)
+        except (ValueError, TypeError):
+            rx_int = None
+
         for k, v in saved_codes.items():
             if k.startswith("__"):
                 continue
-            if isinstance(v, dict):
-                stored_type = v.get("type")
-                if stored_type == "code" or "code" in v:
-                    stored_code = v.get("code")
-                    if _codes_match(stored_code, rx_code):
-                        matched_key = k
-                        matched_data = v
-                        break
-                elif stored_type == "rolling_code":
-                    base_id = v.get("base_id")
-                    try:
-                        rx_int = int(rx_code)
-                        if base_id and (rx_int >> 8) == int(base_id):
+            if not isinstance(v, dict):
+                continue
+
+            stored_code = v.get("code")
+            stored_type = v.get("type")
+
+            # Check 1: Exact code match (Fixed protocol codes)
+            if stored_code is not None and _codes_match(stored_code, rx_code):
+                matched_key = k
+                matched_data = v
+                break
+
+            # Check 2: Explicit rolling code match by base_id
+            if stored_type == "rolling_code" and rx_int is not None:
+                base_id = v.get("base_id")
+                if base_id and (rx_int >> 8) == int(base_id):
+                    matched_key = k
+                    matched_data = v
+                    v["code"] = rx_int
+                    hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                    break
+
+            # Check 3: Auto-detect 32-bit counter rolling code (counter + checksum == 7)
+            # Matches buttons learned before rolling detection or stored as standard code
+            if rx_int is not None and stored_code is not None:
+                try:
+                    stored_int = int(stored_code)
+                    if (rx_int >> 8) == (stored_int >> 8):
+                        b_rx = rx_int & 0xFF
+                        if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 or abs(rx_int - stored_int) <= 255:
                             matched_key = k
                             matched_data = v
+                            v["type"] = "rolling_code"
+                            v["base_id"] = rx_int >> 8
+                            v["delta"] = 15
                             v["code"] = rx_int
                             hass.async_create_task(entry_data["store"].async_save(saved_codes))
                             break
-                    except (ValueError, TypeError):
-                        pass
+                except (ValueError, TypeError):
+                    pass
 
-    # 2. If no match by code, or code is unavailable/unsupported protocol, match by raw pulse correlation
-    if not matched_key and rx_raw:
+    # 2. Only if rx_code was NOT decoded (e.g. event == "rx_raw" for custom protocols)
+    # CRITICAL: We NEVER match by raw correlation if rx_code was already decoded by the radio!
+    # Because different buttons on the same remote share 95%+ identical pulse timing!
+    if not matched_key and rx_code is None and rx_raw:
         best_score = 0.0
         best_match_key = None
         best_match_data = None
@@ -1427,11 +1487,13 @@ def _handle_passive_rf_receive(
             if isinstance(v, str):
                 stored_raw = v
             elif isinstance(v, dict):
+                if v.get("type") in ("code", "rolling_code") and "code" in v:
+                    continue
                 stored_raw = v.get("raw", "")
 
             if stored_raw:
                 score = _compare_raw_pulses(rx_raw, stored_raw)
-                if score >= 0.80 and score > best_score:
+                if score >= 0.85 and score > best_score:
                     best_score = score
                     best_match_key = k
                     best_match_data = v

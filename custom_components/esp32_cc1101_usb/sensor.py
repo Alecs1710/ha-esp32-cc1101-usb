@@ -390,6 +390,8 @@ class Esp32DeviceLastButtonSensor(SensorEntity):
             via_device=(DOMAIN, entry.entry_id),
         )
         self._attr_native_value = "None"
+        listeners = self._entry_data.setdefault("device_button_listeners", {})
+        listeners[self._device_name.lower()] = self.on_button_received
 
     async def async_added_to_hass(self) -> None:
         """Register listener for passive over-the-air RF button presses."""
@@ -403,13 +405,13 @@ class Esp32DeviceLastButtonSensor(SensorEntity):
         self._last_code = code
         self._reception_count += 1
         self._last_received_time = datetime.now().strftime("%H:%M:%S")
-        self._attr_native_value = cmd_name
+        self._attr_native_value = f"{cmd_name} ({self._last_received_time})"
         if getattr(self, "hass", None) is not None:
             self.async_write_ha_state()
 
     @property
     def native_value(self) -> str:
-        """Return the name of the last button pressed."""
+        """Return the name and timestamp of the last button pressed."""
         return self._attr_native_value
 
     @property
@@ -418,6 +420,8 @@ class Esp32DeviceLastButtonSensor(SensorEntity):
         return {
             "device": self._device_name,
             "last_button": self._last_button,
+            "button": self._last_button,
+            "command": self._last_button,
             "rssi_dbm": self._last_rssi,
             "code": self._last_code,
             "reception_count": self._reception_count,
