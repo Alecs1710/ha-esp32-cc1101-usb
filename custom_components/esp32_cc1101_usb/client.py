@@ -108,7 +108,7 @@ class Esp32Cc1101Client:
             CONF_MIN_REPEATS, entry.data.get(CONF_MIN_REPEATS, DEFAULT_MIN_REPEATS)
         )
         self.rx_mode: str = entry.options.get(
-            CONF_RX_MODE, entry.data.get(CONF_RX_MODE, RX_MODE_DECODED)
+            CONF_RX_MODE, entry.data.get(CONF_RX_MODE, RX_MODE_ALL)
         )
         self.radio_state: int = 0
         self.rssi: int | None = None

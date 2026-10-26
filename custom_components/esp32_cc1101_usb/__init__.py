@@ -118,15 +118,72 @@ SERVICE_FLASH_FIRMWARE_SCHEMA = vol.Schema(
 )
 
 
+def _codes_match(c1: Any, c2: Any) -> bool:
+    """Robust equality check between two RF codes across types (int, str, hex)."""
+    if c1 is None or c2 is None:
+        return False
+    if c1 == c2:
+        return True
+    try:
+        if int(c1) == int(c2):
+            return True
+    except (ValueError, TypeError):
+        pass
+    s1 = str(c1).strip().lower()
+    s2 = str(c2).strip().lower()
+    if s1 == s2:
+        return True
+    try:
+        h1 = hex(int(c1)) if not s1.startswith("0x") else s1
+        h2 = hex(int(c2)) if not s2.startswith("0x") else s2
+        if h1 == h2:
+            return True
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
+def _compare_raw_pulses(raw1: str, raw2: str) -> float:
+    """Compare two comma-separated raw pulse strings and return correlation score (0.0 to 1.0)."""
+    try:
+        p1 = [int(x.strip()) for x in raw1.split(",") if x.strip()]
+        p2 = [int(x.strip()) for x in raw2.split(",") if x.strip()]
+    except (ValueError, AttributeError):
+        return 0.0
+
+    if not p1 or not p2:
+        return 0.0
+
+    if abs(len(p1) - len(p2)) > 6:
+        return 0.0
+
+    start_idx = 1 if (p1[0] > 2500 and p2[0] > 2500) else 0
+    min_len = min(len(p1), len(p2))
+    total = min_len - start_idx
+    if total < 10:
+        return 0.0
+
+    matches = 0
+    for i in range(start_idx, min_len):
+        v1 = p1[i]
+        v2 = p2[i]
+        tol = max(200, int(0.30 * max(v1, v2)))
+        if abs(v1 - v2) <= tol:
+            matches += 1
+
+    return matches / total
+
+
 def _analyze_learning_consensus(
     samples: list[str], decoded_samples: list[dict[str, Any]]
 ) -> tuple[dict[str, Any] | str, str]:
     """Analyzes multiple repetitions across button presses to find the true, confirmed RF code."""
+    rep_raw = samples[0] if samples else ""
+
     # 1. Analyze decoded samples across all button presses
     if decoded_samples:
         bit_counts = Counter(s.get("bits", 0) for s in decoded_samples if s.get("bits"))
         if bit_counts:
-            # Prioritize the longest complete bit length that appeared repeatedly
             dominant_bits = None
             for b, count in sorted(bit_counts.items(), key=lambda x: x[0], reverse=True):
                 if count >= 2 or count == len(decoded_samples):
@@ -142,7 +199,6 @@ def _analyze_learning_consensus(
                 pulse_lengths = [s.get("pulse_length", 350) for s in valid_samples if s.get("pulse_length")]
                 pulse_len = round(statistics.median(pulse_lengths)) if pulse_lengths else 350
 
-                # Check for rolling counter across ordered distinct button presses
                 unique_ordered: list[int] = []
                 for c in codes:
                     if not unique_ordered or unique_ordered[-1] != c:
@@ -167,9 +223,9 @@ def _analyze_learning_consensus(
                             "bits": dominant_bits,
                             "protocol": proto,
                             "pulse_length": pulse_len,
+                            "raw": rep_raw,
                         }, desc
 
-                # Fixed code (majority consensus)
                 most_common_code, _ = Counter(codes).most_common(1)[0]
                 desc = (
                     f"Learned as **Decoded Protocol** "
@@ -181,6 +237,7 @@ def _analyze_learning_consensus(
                     "bits": dominant_bits,
                     "protocol": proto,
                     "pulse_length": pulse_len,
+                    "raw": rep_raw,
                 }, desc
 
     # 2. Raw pulse analysis across repetitions if not decoded
@@ -879,7 +936,7 @@ async def _handle_learning_sample(
             learning["samples"], learning.get("decoded_samples", [])
         )
         learning["active"] = False
-        prev_mode = learning.get("prev_mode", RX_MODE_DECODED)
+        prev_mode = learning.get("prev_mode", RX_MODE_ALL)
         client: Esp32Cc1101Client = entry_data["client"]
         hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
 
@@ -968,48 +1025,74 @@ def _handle_passive_rf_receive(
     saved_codes = entry_data.get("saved_codes", {})
     payload = data.get("payload", {})
     rx_code = payload.get("code")
-    rx_raw = client.last_code
+    rx_raw = payload.get("raw") or client.last_code or ""
 
     matched_key: str | None = None
     matched_data: dict[str, Any] | str | None = None
 
+    # 1. Try matching by decoded code (EV1527, PT2262, fixed, rolling codes)
     if rx_code is not None:
         for k, v in saved_codes.items():
             if k.startswith("__"):
                 continue
             if isinstance(v, dict):
-                if v.get("type") == "code" and v.get("code") == rx_code:
-                    matched_key = k
-                    matched_data = v
-                    break
-                elif v.get("type") == "rolling_code":
+                stored_type = v.get("type")
+                if stored_type == "code" or "code" in v:
+                    stored_code = v.get("code")
+                    if _codes_match(stored_code, rx_code):
+                        matched_key = k
+                        matched_data = v
+                        break
+                elif stored_type == "rolling_code":
                     base_id = v.get("base_id")
-                    if base_id and (rx_code >> 8) == base_id:
-                        matched_key = k
-                        matched_data = v
-                        # Keep counter in sync with physical remote!
-                        v["code"] = rx_code
-                        hass.async_create_task(entry_data["store"].async_save(saved_codes))
-                        break
-    elif rx_raw:
-        raw_pulses = len([p for p in rx_raw.split(",") if p.strip()])
-        if raw_pulses >= 16:
-            for k, v in saved_codes.items():
-                if k.startswith("__"):
-                    continue
-                stored_raw = ""
-                if isinstance(v, str):
-                    stored_raw = v
-                elif isinstance(v, dict) and v.get("type") == "raw":
-                    stored_raw = v.get("raw", "")
-                if stored_raw:
-                    stored_pulses = len([p for p in stored_raw.split(",") if p.strip()])
-                    if abs(raw_pulses - stored_pulses) <= 2:
-                        matched_key = k
-                        matched_data = v
-                        break
+                    try:
+                        rx_int = int(rx_code)
+                        if base_id and (rx_int >> 8) == int(base_id):
+                            matched_key = k
+                            matched_data = v
+                            v["code"] = rx_int
+                            hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                            break
+                    except (ValueError, TypeError):
+                        pass
+
+    # 2. If no match by code, or code is unavailable/unsupported protocol, match by raw pulse correlation
+    if not matched_key and rx_raw:
+        best_score = 0.0
+        best_match_key = None
+        best_match_data = None
+
+        for k, v in saved_codes.items():
+            if k.startswith("__"):
+                continue
+            stored_raw = ""
+            if isinstance(v, str):
+                stored_raw = v
+            elif isinstance(v, dict):
+                stored_raw = v.get("raw", "")
+
+            if stored_raw:
+                score = _compare_raw_pulses(rx_raw, stored_raw)
+                if score >= 0.80 and score > best_score:
+                    best_score = score
+                    best_match_key = k
+                    best_match_data = v
+
+        if best_match_key:
+            matched_key = best_match_key
+            matched_data = best_match_data
+            _LOGGER.debug(
+                "Matched raw RF signal for '%s' with correlation score %.2f",
+                matched_key,
+                best_score,
+            )
 
     if not matched_key:
+        _LOGGER.debug(
+            "Passive RF signal not matched (code=%s, raw_len=%d)",
+            rx_code,
+            len(rx_raw.split(',')) if rx_raw else 0,
+        )
         return
 
     dev_name = ""
@@ -1021,6 +1104,10 @@ def _handle_passive_rf_receive(
         dev_name, cmd_name = matched_key.split(" - ", 1)
         dev_name = dev_name.strip()
         cmd_name = cmd_name.strip()
+
+    device_button_listeners = entry_data.get("device_button_listeners", {})
+    if not dev_name and len(device_button_listeners) == 1:
+        dev_name = list(device_button_listeners.keys())[0]
 
     _LOGGER.info(
         "Physical RF remote detected: Device '%s' -> Button '%s' (RSSI: %s dBm)",
@@ -1041,20 +1128,25 @@ def _handle_passive_rf_receive(
     )
 
     # Notify device-specific button listeners (Last Button Pressed sensor)
-    device_button_listeners = entry_data.get("device_button_listeners", {})
-    if dev_name.lower() in device_button_listeners:
+    target_dev_lower = dev_name.strip().lower()
+    listener = device_button_listeners.get(target_dev_lower)
+    if not listener:
+        for d_key, d_listener in device_button_listeners.items():
+            if d_key.replace(" ", "_") == target_dev_lower.replace(" ", "_"):
+                listener = d_listener
+                break
+
+    if listener:
         try:
-            device_button_listeners[dev_name.lower()](
-                cmd_name, client.last_rssi, rx_code or rx_raw
-            )
+            listener(cmd_name, client.last_rssi, rx_code or rx_raw)
         except Exception as err:
             _LOGGER.debug("Device button listener error: %s", err)
 
     # Notify any state listeners
     state_listeners = entry_data.get("state_listeners", {})
-    for listener in list(state_listeners.values()):
+    for slistener in list(state_listeners.values()):
         try:
-            listener(dev_name, cmd_name)
+            slistener(dev_name, cmd_name)
         except Exception as err:
             _LOGGER.debug("State listener callback error: %s", err)
 
@@ -1073,7 +1165,7 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     new_repeats = entry.options.get(CONF_REPEATS, entry.data.get(CONF_REPEATS, DEFAULT_REPEATS))
     new_min_rssi = entry.options.get(CONF_MIN_RSSI, entry.data.get(CONF_MIN_RSSI, DEFAULT_MIN_RSSI))
     new_min_repeats = entry.options.get(CONF_MIN_REPEATS, entry.data.get(CONF_MIN_REPEATS, DEFAULT_MIN_REPEATS))
-    new_rx_mode = entry.options.get(CONF_RX_MODE, entry.data.get(CONF_RX_MODE, RX_MODE_DECODED))
+    new_rx_mode = entry.options.get(CONF_RX_MODE, entry.data.get(CONF_RX_MODE, RX_MODE_ALL))
 
     client.repeats = new_repeats
     await client.async_set_config(

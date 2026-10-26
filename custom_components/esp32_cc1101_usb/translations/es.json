@@ -32,28 +32,17 @@
     "step": {
       "init": {
         "title": "ESP32 CC1101 RF Studio",
-        "description": "Elige una acción para aprender botones, gestionar dispositivos o ajustar la radio.",
+        "description": "Elige una acción para gestionar tus dispositivos o ajustar la radio.",
         "menu_options": {
-          "learn_button": "Aprender Botón de Mando",
-          "select_device": "Gestionar Botones de Dispositivo",
-          "create_device": "Crear Nuevo Dispositivo RF",
+          "manage_devices": "Gestionar Dispositivos y Mandos RF",
           "radio_settings": "Parámetros de Radio CC1101"
         }
       },
-      "select_device": {
-        "title": "Seleccionar Dispositivo",
-        "description": "Elige el dispositivo cuyos botones deseas gestionar, aprender o reconfigurar.",
+      "manage_devices": {
+        "title": "Dispositivos y Mandos RF",
+        "description": "Selecciona un dispositivo en la lista para aprender, configurar o borrar sus botones, o escribe uno nuevo directamente.",
         "data": {
-          "device_name": "Dispositivo"
-        }
-      },
-      "learn_button": {
-        "title": "Aprender Botón de Mando RF",
-        "description": "Selecciona o escribe el dispositivo, el nombre del botón y las repeticiones deseadas. Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
-        "data": {
-          "device_name": "Dispositivo (elige existente o escribe nuevo)",
-          "button_name": "Nombre del Botón / Comando",
-          "repeats": "Repeticiones de Transmisión"
+          "device_name": "Dispositivo (elige existente o escribe nuevo)"
         }
       },
       "device_menu": {

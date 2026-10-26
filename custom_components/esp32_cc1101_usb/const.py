@@ -29,6 +29,7 @@ DEFAULT_MIN_REPEATS = 1
 RX_MODE_DECODED = "Decoded Only (Clean)"
 RX_MODE_ALL = "All (Decoded + Raw)"
 RX_MODE_LEARN = "Learn Mode"
+DEFAULT_RX_MODE = RX_MODE_ALL
 
 RX_MODE_OPTIONS = [
     RX_MODE_DECODED,
