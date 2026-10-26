@@ -127,22 +127,37 @@
         }
       },
       "device_learn_verify": {
-        "title": "Verify Button: {button_name}",
-        "description": "✅ Signal captured: **{candidate_desc}**.\n\nNow we will verify that Home Assistant detects your remote correctly.\n\n👉 **Instructions:**\n1. Click **Submit / Check Press** below.\n2. As soon as you click, press your remote button **ONCE**."
+        "title": "Test Remote Detection: {button_name}",
+        "description": "Button is already saved (**{candidate_desc}**).\n\nTo verify live remote detection:\n1. Click **Submit / Start Detection** below.\n2. Press your remote button **ONCE** (you have 12 seconds)."
       },
       "device_learn_verify_failed": {
-        "title": "Verification Not Detected: {button_name}",
-        "description": "⚠️ Single press was not detected within the timeout (or signal did not match).\n\nTo prevent corrupt codes, candidate code has **NOT** been saved.\n\nWhat would you like to do?",
+        "title": "Detection Not Received: {button_name}",
+        "description": "ℹ️ Single press was not detected within 12 seconds.\n\nButton **{button_name}** remains safely saved with the confirmed 5-second signal (**{candidate_desc}**).\n\nWhat would you like to do next?",
         "menu_options": {
-          "device_learn_verify": "Retry Verification (Press 1 time)",
+          "device_learn_verify": "Retry Detection (Press 1 time)",
+          "device_test_send": "Test RF Transmit from Home Assistant",
+          "device_learn_button": "Learn another button for this device",
           "device_learn_record": "Re-record (5 seconds continuous hold)",
-          "device_menu": "Cancel and return to device menu"
+          "device_menu": "Finish and return to device menu"
+        }
+      },
+      "device_test_send": {
+        "title": "Test RF Transmit: {button_name}",
+        "description": "📡 Transmitting RF command for **{button_name}** ({device_name}).\n\nCheck if your appliance reacted.\n\nWhat would you like to do next?",
+        "menu_options": {
+          "device_test_send": "Send Signal Again",
+          "device_learn_verify": "Test Physical Remote Detection",
+          "device_learn_button": "Learn another button for this device",
+          "device_menu": "Return to device menu",
+          "finish": "Finish and Close"
         }
       },
       "device_learn_success": {
-        "title": "Button Verified Successfully!",
-        "description": "🎉 Button **{button_name}** verified and saved for **{device_name}**.\n\nConfirmed signal: **{candidate_desc}**.\n\nA button entity has been created on your dashboard and device status sensor updated.\n\nWhat would you like to do next?",
+        "title": "Button Learned and Saved Successfully!",
+        "description": "🎉 Button **{button_name}** has been saved for **{device_name}**.\n\nConfirmed signal: **{candidate_desc}**.\n\nA button entity has been created on your dashboard and device status sensor updated.\n\nWhat would you like to do next?",
         "menu_options": {
+          "device_test_send": "Test RF Transmit (Check appliance)",
+          "device_learn_verify": "Test Physical Remote Detection",
           "device_learn_button": "Learn another button for this device",
           "device_menu": "Return to device menu",
           "finish": "Finish and Close"

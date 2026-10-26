@@ -127,22 +127,37 @@
         }
       },
       "device_learn_verify": {
-        "title": "Verificar Botón: {button_name}",
-        "description": "✅ Señal analizada con éxito: **{candidate_desc}**.\n\nAhora vamos a comprobar que Home Assistant detecta tu mando correctamente.\n\n👉 **Instrucciones:**\n1. Haz clic en **Enviar / Comprobar Pulsación** abajo.\n2. En cuanto hagas clic, pulsa el botón de tu mando físico **UNA SOLA VEZ**."
+        "title": "Probar Detección del Mando: {button_name}",
+        "description": "El botón ya está guardado con éxito (**{candidate_desc}**).\n\nSi deseas comprobar la detección del mando físico:\n1. Haz clic en **Enviar / Empezar Detección** abajo.\n2. Pulsa el botón de tu mando **UNA VEZ** (tienes 12 segundos)."
       },
       "device_learn_verify_failed": {
-        "title": "Verificación No Detectada: {button_name}",
-        "description": "⚠️ No se detectó la pulsación de confirmación dentro del tiempo de espera (o la señal recibida no coincidió).\n\nPara proteger tu sistema de señales erróneas o ruidos, el código **NO** se ha guardado.\n\n¿Qué deseas hacer?",
+        "title": "Detección No Recibida: {button_name}",
+        "description": "ℹ️ No se detectó ninguna pulsación dentro de los 12 segundos.\n\nEl botón **{button_name}** sigue guardado con la señal confirmada de los 5 segundos (**{candidate_desc}**).\n\n¿Qué deseas hacer ahora?",
         "menu_options": {
           "device_learn_verify": "Reintentar Comprobación (pulsar 1 vez)",
+          "device_test_send": "Probar Envío RF desde Home Assistant",
+          "device_learn_button": "Aprender otro botón para este dispositivo",
           "device_learn_record": "Volver a Grabar (5 segundos continuos)",
-          "device_menu": "Cancelar y volver al menú del dispositivo"
+          "device_menu": "Finalizar y volver al menú del dispositivo"
+        }
+      },
+      "device_test_send": {
+        "title": "Probar Envío RF: {button_name}",
+        "description": "📡 Transmitiendo señal para **{button_name}** ({device_name}).\n\nComprueba si tu aparato físico ha reaccionado.\n\n¿Qué deseas hacer ahora?",
+        "menu_options": {
+          "device_test_send": "Enviar Señal Otra Vez",
+          "device_learn_verify": "Probar Detección del Mando Físico",
+          "device_learn_button": "Aprender otro botón para este dispositivo",
+          "device_menu": "Volver al menú del dispositivo",
+          "finish": "Finalizar y Cerrar"
         }
       },
       "device_learn_success": {
-        "title": "¡Botón Verificado con Éxito!",
-        "description": "🎉 El botón **{button_name}** ha sido verificado y guardado para **{device_name}**.\n\nSeñal confirmada: **{candidate_desc}**.\n\nSe ha creado la entidad botón en tu panel y se ha actualizado el sensor del dispositivo.\n\n¿Qué deseas hacer ahora?",
+        "title": "¡Botón Aprendido y Guardado con Éxito!",
+        "description": "🎉 El botón **{button_name}** ha sido guardado para **{device_name}**.\n\nSeñal confirmada: **{candidate_desc}**.\n\nSe ha creado la entidad botón en tu panel y se ha actualizado el sensor del dispositivo.\n\n¿Qué deseas hacer ahora?",
         "menu_options": {
+          "device_test_send": "Probar Envío RF (Comprobar aparato)",
+          "device_learn_verify": "Probar Detección del Mando Físico",
           "device_learn_button": "Aprender otro botón para este dispositivo",
           "device_menu": "Volver al menú del dispositivo",
           "finish": "Finalizar y Cerrar"

@@ -542,9 +542,50 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 self._record_sample_count = len(samples)
                 return await self.async_step_device_learn_failed()
 
-            self._candidate_code = result_code
+            # Confirmed consensus from 5-second continuous capture -> Save immediately!
+            full_cmd_name = f"{dev_name} - {btn_name}" if dev_name else btn_name
+            save_code = dict(result_code) if isinstance(result_code, dict) else result_code
+            if isinstance(save_code, dict):
+                save_code["device"] = dev_name
+                save_code["command"] = btn_name
+                save_code["repeats"] = int(self._learn_repeats)
+            else:
+                save_code = {
+                    "type": "raw",
+                    "raw": save_code,
+                    "device": dev_name,
+                    "command": btn_name,
+                    "repeats": int(self._learn_repeats),
+                }
+
+            saved = entry_data["saved_codes"]
+            saved[full_cmd_name] = save_code
+            devices_list = saved.setdefault("__devices__", [])
+            if dev_name not in devices_list:
+                devices_list.append(dev_name)
+
+            await entry_data["store"].async_save(saved)
+
+            if entry_data.get("add_button_callback"):
+                entry_data["add_button_callback"](full_cmd_name)
+
+            if dev_name:
+                if entry_data.get("add_device_sensor_callback"):
+                    try:
+                        entry_data["add_device_sensor_callback"](dev_name)
+                    except Exception:
+                        pass
+                device_button_listeners = entry_data.get("device_button_listeners", {})
+                listener = device_button_listeners.get(dev_name.lower())
+                if listener:
+                    try:
+                        listener(btn_name, client.last_rssi, save_code.get("code") or save_code.get("raw"))
+                    except Exception:
+                        pass
+
+            self._candidate_code = save_code
             self._candidate_desc = desc
-            return await self.async_step_device_learn_verify()
+            return await self.async_step_device_learn_success()
 
         schema = vol.Schema({})
 
@@ -631,7 +672,7 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
     async def async_step_device_learn_verify(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 3: Verification single-click check in-dialog."""
+        """Step: Optional remote detection verification check."""
         entry_id = self.config_entry.entry_id
         dev_name = self._target_device or "Device"
         btn_name = self._learn_button_name or "Boton"
@@ -661,43 +702,31 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                         cand_code = cand.get("code")
                         if cand_code is not None and rx_code is not None and _codes_match(cand_code, rx_code):
                             is_match = True
-                        elif cand.get("type") == "rolling_code" and rx_code is not None:
-                            base_id = cand.get("base_id")
+                        elif rx_code is not None:
                             try:
                                 rx_int = int(rx_code)
-                                if rx_int > 0xFFFFFF:
-                                    b_rx = rx_int & 0xFF
-                                    if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and base_id and (rx_int >> 8) == int(base_id):
+                                cand_int = int(cand_code) if cand_code is not None else None
+                                base_id = cand.get("base_id")
+                                target_base = int(base_id) if base_id is not None else (cand_int >> 8 if cand_int else None)
+
+                                if target_base:
+                                    if (rx_int >> 8) == target_base:
                                         is_match = True
                                         cand["code"] = rx_int
-                            except (ValueError, TypeError):
-                                pass
-                        elif cand_code is not None and rx_code is not None:
-                            try:
-                                rx_int = int(rx_code)
-                                cand_int = int(cand_code)
-                                # Only upgrade to rolling_code if 32-bit counter protocol is verified
-                                if rx_int > 0xFFFFFF and cand_int > 0xFFFFFF:
-                                    rx_base = rx_int >> 8
-                                    cand_base = cand_int >> 8
-                                    if rx_base == cand_base and rx_base > 0xFFFF:
-                                        b_rx = rx_int & 0xFF
-                                        b_cand = cand_int & 0xFF
-                                        if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and (((b_cand >> 4) & 0x0F) + (b_cand & 0x0F)) == 7:
-                                            is_match = True
-                                            cand["type"] = "rolling_code"
-                                            cand["base_id"] = rx_base
-                                            cand["delta"] = 15
-                                            cand["code"] = rx_int
+                                        cand["type"] = "rolling_code"
+                                    elif rx_int == target_base or (rx_int >> 8) == (target_base >> 8):
+                                        is_match = True
+                                elif cand_int:
+                                    if (rx_int >> 8) == (cand_int >> 8) or (cand_int >> 8) == rx_int or (rx_int >> 8) == cand_int:
+                                        is_match = True
                             except (ValueError, TypeError):
                                 pass
 
-                        # Only use raw pulse correlation if rx_code was NOT decoded
-                        if not is_match and rx_code is None and rx_raw and cand.get("raw"):
-                            if _compare_raw_pulses(rx_raw, cand["raw"]) >= 0.85:
+                        if not is_match and rx_raw and cand.get("raw"):
+                            if _compare_raw_pulses(rx_raw, cand["raw"]) >= 0.70:
                                 is_match = True
-                    elif isinstance(cand, str) and rx_code is None and rx_raw:
-                        if _compare_raw_pulses(rx_raw, cand) >= 0.85:
+                    elif isinstance(cand, str) and rx_raw:
+                        if _compare_raw_pulses(rx_raw, cand) >= 0.70:
                             is_match = True
 
                     if is_match:
@@ -708,7 +737,7 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
 
             remove_listener = client.register_listener(on_verify)
             try:
-                await asyncio.wait_for(event_future, timeout=6.0)
+                await asyncio.wait_for(event_future, timeout=12.0)
             except asyncio.TimeoutError:
                 pass
             finally:
@@ -717,39 +746,7 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             if not matched:
                 return await self.async_step_device_learn_verify_failed()
 
-            # Matched! Save code and create entity
-            full_cmd_name = f"{dev_name} - {btn_name}" if dev_name else btn_name
-            result_code = self._candidate_code
-            if isinstance(result_code, dict):
-                result_code["device"] = dev_name
-                result_code["command"] = btn_name
-                result_code["repeats"] = int(self._learn_repeats)
-            else:
-                result_code = {
-                    "type": "raw",
-                    "raw": result_code,
-                    "device": dev_name,
-                    "command": btn_name,
-                    "repeats": int(self._learn_repeats),
-                }
-
-            saved = entry_data["saved_codes"]
-            saved[full_cmd_name] = result_code
-            devices_list = saved.setdefault("__devices__", [])
-            if dev_name not in devices_list:
-                devices_list.append(dev_name)
-
-            await entry_data["store"].async_save(saved)
-
-            if entry_data.get("add_button_callback"):
-                entry_data["add_button_callback"](full_cmd_name)
-
             if dev_name:
-                if entry_data.get("add_device_sensor_callback"):
-                    try:
-                        entry_data["add_device_sensor_callback"](dev_name)
-                    except Exception:
-                        pass
                 device_button_listeners = entry_data.get("device_button_listeners", {})
                 listener = device_button_listeners.get(dev_name.lower())
                 if listener:
@@ -783,12 +780,16 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         menu: dict[str, str] = {}
         if is_es:
             menu["device_learn_verify"] = "Reintentar Comprobacion (pulsar 1 vez)"
+            menu["device_test_send"] = "Probar Envio RF desde Home Assistant"
+            menu["device_learn_button"] = f"Aprender otro boton para {dev_name}"
             menu["device_learn_record"] = "Volver a Grabar (5 segundos continuos)"
-            menu["device_menu"] = f"Cancelar y volver al menu de {dev_name}"
+            menu["device_menu"] = f"Finalizar y volver al menu de {dev_name}"
         else:
             menu["device_learn_verify"] = "Retry Verification (Press 1 time)"
+            menu["device_test_send"] = "Test RF Transmit from Home Assistant"
+            menu["device_learn_button"] = f"Learn another button for {dev_name}"
             menu["device_learn_record"] = "Re-record (5 seconds hold)"
-            menu["device_menu"] = f"Cancel and return to {dev_name} menu"
+            menu["device_menu"] = f"Finish and return to {dev_name} menu"
 
         return self.async_show_menu(
             step_id="device_learn_verify_failed",
@@ -799,20 +800,77 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             },
         )
 
+    async def async_step_device_test_send(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Test transmit the learned button code to check if appliance responds."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        if client and self._candidate_code:
+            code_obj = self._candidate_code
+            repeats = int(self._learn_repeats)
+            try:
+                if isinstance(code_obj, dict) and "code" in code_obj:
+                    await client.async_send_code(
+                        code=code_obj["code"],
+                        bits=code_obj.get("bits", 24),
+                        protocol=code_obj.get("protocol", 1),
+                        pulse_length=code_obj.get("pulse_length", 350),
+                        repeats=repeats,
+                    )
+                elif isinstance(code_obj, dict) and "raw" in code_obj:
+                    await client.async_send_raw(code_obj["raw"], repeats=repeats)
+                elif isinstance(code_obj, str):
+                    await client.async_send_raw(code_obj, repeats=repeats)
+            except Exception as err:
+                _LOGGER.error("Failed to test send RF code: %s", err)
+
+        menu: dict[str, str] = {}
+        if is_es:
+            menu["device_test_send"] = "Enviar Senal Otra Vez"
+            menu["device_learn_verify"] = "Probar Deteccion del Mando Fisico"
+            menu["device_learn_button"] = f"Aprender otro boton para {dev_name}"
+            menu["device_menu"] = f"Volver al menu de {dev_name}"
+            menu["finish"] = "Finalizar y Cerrar"
+        else:
+            menu["device_test_send"] = "Send Signal Again"
+            menu["device_learn_verify"] = "Test Physical Remote Detection"
+            menu["device_learn_button"] = f"Learn another button for {dev_name}"
+            menu["device_menu"] = f"Return to {dev_name} menu"
+            menu["finish"] = "Finish and Close"
+
+        return self.async_show_menu(
+            step_id="device_test_send",
+            menu_options=menu,
+            description_placeholders={
+                "button_name": btn_name,
+                "device_name": dev_name,
+            },
+        )
+
     async def async_step_device_learn_success(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Screen shown after successful learning & verification."""
+        """Screen shown after button is learned and saved."""
         dev_name = self._target_device or "Device"
         btn_name = self._learn_button_name or "Boton"
         is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
 
         menu: dict[str, str] = {}
         if is_es:
+            menu["device_test_send"] = "Probar Envio RF (Comprobar aparato)"
+            menu["device_learn_verify"] = "Probar Deteccion del Mando Fisico"
             menu["device_learn_button"] = f"Aprender otro boton para {dev_name}"
             menu["device_menu"] = f"Volver al menu de {dev_name}"
             menu["finish"] = "Finalizar y Cerrar"
         else:
+            menu["device_test_send"] = "Test RF Transmit (Check device)"
+            menu["device_learn_verify"] = "Test Physical Remote Detection"
             menu["device_learn_button"] = f"Learn another button for {dev_name}"
             menu["device_menu"] = f"Return to {dev_name} menu"
             menu["finish"] = "Finish and Close"

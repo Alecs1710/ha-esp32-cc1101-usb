@@ -156,24 +156,22 @@ def _compare_raw_pulses(raw1: str, raw2: str) -> float:
     if not p1 or not p2:
         return 0.0
 
-    if abs(len(p1) - len(p2)) > 6:
-        return 0.0
-
     start_idx = 1 if (p1[0] > 2500 and p2[0] > 2500) else 0
-    min_len = min(len(p1), len(p2))
-    total = min_len - start_idx
-    if total < 10:
+    sub1 = p1[start_idx:]
+    sub2 = p2[start_idx:]
+    compare_len = min(len(sub1), len(sub2))
+    if compare_len < 10:
         return 0.0
 
     matches = 0
-    for i in range(start_idx, min_len):
-        v1 = p1[i]
-        v2 = p2[i]
-        tol = max(200, int(0.30 * max(v1, v2)))
+    for i in range(compare_len):
+        v1 = sub1[i]
+        v2 = sub2[i]
+        tol = max(200, int(0.35 * max(v1, v2)))
         if abs(v1 - v2) <= tol:
             matches += 1
 
-    return matches / total
+    return matches / compare_len
 
 
 def _analyze_learning_consensus(
@@ -1106,9 +1104,39 @@ async def _async_learning_recording_timer(
         )
         return
 
-    # Phase 1 Success! Move to verification phase
+    # Phase 1 Success! Save button immediately from confirmed 5-second consensus
+    full_cmd_name = display_label
+    save_code = dict(result_code) if isinstance(result_code, dict) else result_code
+    if isinstance(save_code, dict):
+        save_code["device"] = dev_name
+        save_code["command"] = cmd_name
+    else:
+        save_code = {
+            "type": "raw",
+            "raw": save_code,
+            "device": dev_name,
+            "command": cmd_name,
+        }
+    if learning.get("repeats") is not None and isinstance(save_code, dict):
+        save_code["repeats"] = int(learning["repeats"])
+
+    entry_data["saved_codes"][full_cmd_name] = save_code
+    if dev_name:
+        devices_list = entry_data["saved_codes"].setdefault("__devices__", [])
+        if dev_name not in devices_list:
+            devices_list.append(dev_name)
+    await entry_data["store"].async_save(entry_data["saved_codes"])
+
+    if entry_data.get("add_button_callback"):
+        entry_data["add_button_callback"](full_cmd_name)
+    if dev_name and entry_data.get("add_device_sensor_callback"):
+        try:
+            entry_data["add_device_sensor_callback"](dev_name)
+        except Exception:
+            pass
+
     learning["phase"] = "verifying"
-    learning["candidate_code"] = result_code
+    learning["candidate_code"] = save_code
     learning["candidate_desc"] = desc
     learning["last_sample_time"] = time.time()  # reset debounce for single click
 
@@ -1124,18 +1152,18 @@ async def _async_learning_recording_timer(
             pass
 
     _LOGGER.info(
-        "Recording phase complete for '%s' (%s). Awaiting single-click verification...",
+        "Recording phase complete for '%s' (%s). Button saved. Awaiting optional single-click verification...",
         display_label,
         desc,
     )
 
     persistent_notification.async_create(
         hass,
-        f"✅ **Paso 2 de 2: Verificación de `{display_label}`**\n\n"
+        f"✅ **¡Botón `{display_label}` aprendido y guardado!**\n\n"
         f"Señal analizada con éxito: `{desc}`.\n\n"
-        f"👉 **Ahora, pulsa el botón en tu mando físico UNA SOLA VEZ para confirmar que Home Assistant lo detecta.**\n\n"
-        f"*(Tienes 15 segundos para pulsar)*",
-        title=f"Paso 2/2: Pulsa para Verificar ({display_label})",
+        f"👉 **Pulsa el botón en tu mando físico una sola vez para comprobar que el sensor lo detecta en tiempo real.**\n\n"
+        f"*(El botón ya está guardado en Home Assistant. Tienes 15 segundos para probar la detección).* ",
+        title=f"Botón Guardado: {display_label} (Prueba de Pulsación)",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
     )
 
@@ -1161,6 +1189,7 @@ async def _async_learning_verification_timeout(
     cmd_name = learning.get("name", "")
     dev_name = learning.get("device", "").strip()
     display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
+    desc = learning.get("candidate_desc", "Confirmado")
 
     learning["active"] = False
     learning["phase"] = "timeout"
@@ -1175,17 +1204,16 @@ async def _async_learning_verification_timeout(
         except Exception:
             pass
 
-    _LOGGER.warning(
-        "Verification timed out after 15s for '%s'. Candidate code was discarded.",
+    _LOGGER.info(
+        "Verification window closed for '%s'. Button remains permanently saved from 5s consensus.",
         display_label,
     )
     persistent_notification.async_create(
         hass,
-        f"⏱️ **Tiempo agotado en la verificación de `{display_label}`**\n\n"
-        f"No se detectó la pulsación de confirmación dentro del plazo de 15 segundos.\n\n"
-        f"Para garantizar que no se guarden señales corruptas ni interferencias de otros dispositivos, **el código capturado ha sido descartado**.\n\n"
-        f"Puedes volver a iniciar el proceso cuando estés listo.",
-        title=f"Verificación Cancelada: {display_label}",
+        f"✅ **Botón `{display_label}` guardado:**\n\n"
+        f"El botón ha quedado guardado con la señal confirmada de los 5 segundos ({desc}).\n\n"
+        f"Ya está listo para usar y enviar desde tu panel de Home Assistant.",
+        title=f"Botón Disponible: {display_label}",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
     )
 
@@ -1398,43 +1426,32 @@ async def _handle_learning_sample(
             if cand_code is not None and rx_code is not None:
                 if _codes_match(cand_code, rx_code):
                     matched = True
-                elif cand_type == "rolling_code":
-                    base_id = candidate.get("base_id")
-                    try:
-                        rx_int = int(rx_code)
-                        if rx_int > 0xFFFFFF:
-                            b_rx = rx_int & 0xFF
-                            if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and base_id and (rx_int >> 8) == int(base_id):
-                                matched = True
-                                candidate["code"] = rx_int
-                    except (ValueError, TypeError):
-                        pass
                 else:
                     try:
                         rx_int = int(rx_code)
                         cand_int = int(cand_code)
-                        # Only upgrade to rolling_code if 32-bit counter protocol is verified
-                        if rx_int > 0xFFFFFF and cand_int > 0xFFFFFF:
-                            rx_base = rx_int >> 8
-                            cand_base = cand_int >> 8
-                            if rx_base == cand_base and rx_base > 0xFFFF:
-                                b_rx = rx_int & 0xFF
-                                b_cand = cand_int & 0xFF
-                                if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and (((b_cand >> 4) & 0x0F) + (b_cand & 0x0F)) == 7:
-                                    matched = True
-                                    candidate["type"] = "rolling_code"
-                                    candidate["base_id"] = rx_base
-                                    candidate["delta"] = 15
-                                    candidate["code"] = rx_int
+                        base_id = candidate.get("base_id")
+                        target_base = int(base_id) if base_id is not None else (cand_int >> 8 if cand_int else None)
+
+                        if target_base:
+                            if (rx_int >> 8) == target_base:
+                                matched = True
+                                candidate["code"] = rx_int
+                                candidate["type"] = "rolling_code"
+                            elif rx_int == target_base or (rx_int >> 8) == (target_base >> 8):
+                                matched = True
+                        elif cand_int:
+                            if (rx_int >> 8) == (cand_int >> 8) or (cand_int >> 8) == rx_int or (rx_int >> 8) == cand_int:
+                                matched = True
                     except (ValueError, TypeError):
                         pass
 
-            # 2. Match by raw pulse correlation ONLY if rx_code was NOT decoded
-            if not matched and rx_code is None and rx_raw:
+            # 2. Match by raw pulse correlation if code did not match
+            if not matched and rx_raw:
                 cand_raw = candidate.get("raw", "")
                 if cand_raw:
                     score = _compare_raw_pulses(rx_raw, cand_raw)
-                    if score >= 0.85:
+                    if score >= 0.70:
                         matched = True
         elif isinstance(candidate, str) and rx_code is None and rx_raw:
             score = _compare_raw_pulses(rx_raw, candidate)
