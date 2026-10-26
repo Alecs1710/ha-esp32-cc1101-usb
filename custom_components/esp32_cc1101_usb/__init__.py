@@ -720,6 +720,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
     saved_codes = await store.async_load() or {}
 
+    # Auto-sanitize buttons corrupted by previous loose rolling-code thresholds
+    modified_store = False
+    code_map: dict[str, list[str]] = {}
+    for k, v in list(saved_codes.items()):
+        if k.startswith("__") or not isinstance(v, dict):
+            continue
+        c_val = v.get("code")
+        if c_val is not None:
+            code_map.setdefault(str(c_val), []).append(k)
+
+        if v.get("type") == "rolling_code":
+            bits = v.get("bits", 24)
+            code_val = v.get("code", 0)
+            base_id = v.get("base_id", 0)
+            # If not 32-bit or base_id is only 16-bit (<= 0xFFFF), it is a corrupted fixed code
+            if bits < 32 or (isinstance(code_val, int) and code_val <= 0xFFFFFF) or (isinstance(base_id, int) and base_id <= 0xFFFF):
+                _LOGGER.warning(
+                    "Sanitizing corrupted rolling_code button '%s': restoring to fixed code", k
+                )
+                v["type"] = "code"
+                v.pop("base_id", None)
+                v.pop("delta", None)
+                modified_store = True
+
+    # Warn if duplicate codes exist across different buttons
+    for c_str, btn_list in code_map.items():
+        if len(btn_list) > 1:
+            _LOGGER.warning(
+                "Duplicate RF code %s shared by buttons: %s. One of them was likely overwritten and should be re-learned in device options.",
+                c_str,
+                btn_list,
+            )
+
+    if modified_store:
+        hass.async_create_task(store.async_save(saved_codes))
+
     entry_data: dict[str, Any] = {
         "client": client,
         "store": store,
@@ -1366,21 +1402,30 @@ async def _handle_learning_sample(
                     base_id = candidate.get("base_id")
                     try:
                         rx_int = int(rx_code)
-                        if base_id and (rx_int >> 8) == int(base_id):
-                            matched = True
-                            candidate["code"] = rx_int
+                        if rx_int > 0xFFFFFF:
+                            b_rx = rx_int & 0xFF
+                            if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and base_id and (rx_int >> 8) == int(base_id):
+                                matched = True
+                                candidate["code"] = rx_int
                     except (ValueError, TypeError):
                         pass
                 else:
                     try:
                         rx_int = int(rx_code)
                         cand_int = int(cand_code)
-                        if (rx_int >> 8) == (cand_int >> 8):
-                            matched = True
-                            candidate["type"] = "rolling_code"
-                            candidate["base_id"] = rx_int >> 8
-                            candidate["delta"] = 15
-                            candidate["code"] = rx_int
+                        # Only upgrade to rolling_code if 32-bit counter protocol is verified
+                        if rx_int > 0xFFFFFF and cand_int > 0xFFFFFF:
+                            rx_base = rx_int >> 8
+                            cand_base = cand_int >> 8
+                            if rx_base == cand_base and rx_base > 0xFFFF:
+                                b_rx = rx_int & 0xFF
+                                b_cand = cand_int & 0xFF
+                                if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and (((b_cand >> 4) & 0x0F) + (b_cand & 0x0F)) == 7:
+                                    matched = True
+                                    candidate["type"] = "rolling_code"
+                                    candidate["base_id"] = rx_base
+                                    candidate["delta"] = 15
+                                    candidate["code"] = rx_int
                     except (ValueError, TypeError):
                         pass
 
@@ -1428,49 +1473,66 @@ def _handle_passive_rf_receive(
         except (ValueError, TypeError):
             rx_int = None
 
+        # Check 1: Exact code match (Fixed protocol codes or identical rolling code)
         for k, v in saved_codes.items():
-            if k.startswith("__"):
-                continue
-            if not isinstance(v, dict):
+            if k.startswith("__") or not isinstance(v, dict):
                 continue
 
             stored_code = v.get("code")
-            stored_type = v.get("type")
-
-            # Check 1: Exact code match (Fixed protocol codes)
             if stored_code is not None and _codes_match(stored_code, rx_code):
                 matched_key = k
                 matched_data = v
                 break
 
-            # Check 2: Explicit rolling code match by base_id
-            if stored_type == "rolling_code" and rx_int is not None:
-                base_id = v.get("base_id")
-                if base_id and (rx_int >> 8) == int(base_id):
-                    matched_key = k
-                    matched_data = v
-                    v["code"] = rx_int
-                    hass.async_create_task(entry_data["store"].async_save(saved_codes))
-                    break
+        # Check 2: Explicit rolling code match by 24-bit base_id (ONLY for 32-bit rolling codes)
+        if not matched_key and rx_int is not None and rx_int > 0xFFFFFF:
+            b_rx = rx_int & 0xFF
+            if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7:
+                rx_base = rx_int >> 8
+                for k, v in saved_codes.items():
+                    if k.startswith("__") or not isinstance(v, dict):
+                        continue
+                    if v.get("type") == "rolling_code":
+                        base_id = v.get("base_id")
+                        try:
+                            if base_id and int(base_id) == rx_base and rx_base > 0xFFFF:
+                                matched_key = k
+                                matched_data = v
+                                v["code"] = rx_int
+                                hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                                break
+                        except (ValueError, TypeError):
+                            pass
 
-            # Check 3: Auto-detect 32-bit counter rolling code (counter + checksum == 7)
-            # Matches buttons learned before rolling detection or stored as standard code
-            if rx_int is not None and stored_code is not None:
-                try:
-                    stored_int = int(stored_code)
-                    if (rx_int >> 8) == (stored_int >> 8):
-                        b_rx = rx_int & 0xFF
-                        if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 or abs(rx_int - stored_int) <= 255:
-                            matched_key = k
-                            matched_data = v
-                            v["type"] = "rolling_code"
-                            v["base_id"] = rx_int >> 8
-                            v["delta"] = 15
-                            v["code"] = rx_int
-                            hass.async_create_task(entry_data["store"].async_save(saved_codes))
-                            break
-                except (ValueError, TypeError):
-                    pass
+        # Check 3: Auto-detect 32-bit counter rolling code (counter + checksum == 7)
+        # ONLY if both rx and stored are 32-bit, share identical 24-bit base_id, and both pass checksum == 7!
+        # NO loose thresholds (abs <= 255 is strictly prohibited)!
+        if not matched_key and rx_int is not None and rx_int > 0xFFFFFF:
+            b_rx = rx_int & 0xFF
+            if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7:
+                rx_base = rx_int >> 8
+                for k, v in saved_codes.items():
+                    if k.startswith("__") or not isinstance(v, dict):
+                        continue
+                    stored_code = v.get("code")
+                    if stored_code is not None:
+                        try:
+                            stored_int = int(stored_code)
+                            if stored_int > 0xFFFFFF:
+                                stored_base = stored_int >> 8
+                                if stored_base == rx_base and stored_base > 0xFFFF:
+                                    b_stored = stored_int & 0xFF
+                                    if (((b_stored >> 4) & 0x0F) + (b_stored & 0x0F)) == 7:
+                                        matched_key = k
+                                        matched_data = v
+                                        v["type"] = "rolling_code"
+                                        v["base_id"] = rx_base
+                                        v["delta"] = 15
+                                        v["code"] = rx_int
+                                        hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                                        break
+                        except (ValueError, TypeError):
+                            pass
 
     # 2. Only if rx_code was NOT decoded (e.g. event == "rx_raw" for custom protocols)
     # CRITICAL: We NEVER match by raw correlation if rx_code was already decoded by the radio!

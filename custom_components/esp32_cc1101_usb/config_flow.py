@@ -665,21 +665,30 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                             base_id = cand.get("base_id")
                             try:
                                 rx_int = int(rx_code)
-                                if base_id and (rx_int >> 8) == int(base_id):
-                                    is_match = True
-                                    cand["code"] = rx_int
+                                if rx_int > 0xFFFFFF:
+                                    b_rx = rx_int & 0xFF
+                                    if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and base_id and (rx_int >> 8) == int(base_id):
+                                        is_match = True
+                                        cand["code"] = rx_int
                             except (ValueError, TypeError):
                                 pass
                         elif cand_code is not None and rx_code is not None:
                             try:
                                 rx_int = int(rx_code)
                                 cand_int = int(cand_code)
-                                if (rx_int >> 8) == (cand_int >> 8):
-                                    is_match = True
-                                    cand["type"] = "rolling_code"
-                                    cand["base_id"] = rx_int >> 8
-                                    cand["delta"] = 15
-                                    cand["code"] = rx_int
+                                # Only upgrade to rolling_code if 32-bit counter protocol is verified
+                                if rx_int > 0xFFFFFF and cand_int > 0xFFFFFF:
+                                    rx_base = rx_int >> 8
+                                    cand_base = cand_int >> 8
+                                    if rx_base == cand_base and rx_base > 0xFFFF:
+                                        b_rx = rx_int & 0xFF
+                                        b_cand = cand_int & 0xFF
+                                        if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7 and (((b_cand >> 4) & 0x0F) + (b_cand & 0x0F)) == 7:
+                                            is_match = True
+                                            cand["type"] = "rolling_code"
+                                            cand["base_id"] = rx_base
+                                            cand["delta"] = 15
+                                            cand["code"] = rx_int
                             except (ValueError, TypeError):
                                 pass
 
