@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from typing import Any
 import serial.tools.list_ports
 import voluptuous as vol
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant import config_entries
 from homeassistant.components import usb
@@ -257,6 +261,14 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
     def __init__(self) -> None:
         """Initialize options flow."""
         self._target_device: str | None = None
+        self._learn_button_name: str | None = None
+        self._learn_repeats: int = DEFAULT_REPEATS
+        self._learn_min_rssi: int = -60
+        self._candidate_code: Any = None
+        self._candidate_desc: str = ""
+        self._record_error_desc: str = ""
+        self._record_sample_count: int = 0
+        self._menu_message: str | None = None
 
     def _get_all_devices(self) -> list[str]:
         """Return sorted list of all existing device names."""
@@ -350,6 +362,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             if buttons:
                 menu["device_configure_button"] = "Configurar Repeticiones de Boton"
                 menu["device_delete_button"] = "Eliminar Boton de este Dispositivo"
+            menu["manage_devices"] = "Cambiar de Dispositivo"
+            menu["finish"] = "Finalizar y Cerrar"
         else:
             menu = {
                 "device_learn_button": f"Learn New Button ({dev_name})",
@@ -357,16 +371,31 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             if buttons:
                 menu["device_configure_button"] = "Configure Button Repetitions"
                 menu["device_delete_button"] = "Delete Button from Device"
+            menu["manage_devices"] = "Change Device"
+            menu["finish"] = "Finish and Close"
+
+        status_msg = f"{self._menu_message}\n\n" if self._menu_message else ""
+        self._menu_message = None
 
         return self.async_show_menu(
             step_id="device_menu",
             menu_options=menu,
+            description_placeholders={
+                "device_name": dev_name,
+                "status_msg": status_msg,
+            },
         )
+
+    async def async_step_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Finish and close the options flow."""
+        return self.async_create_entry(title="", data={})
 
     async def async_step_device_learn_button(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Learn a button specifically for the currently open device."""
+        """Step 1: Enter button name, transmit repeats, and initial power filter."""
         errors: dict[str, str] = {}
         entry_id = self.config_entry.entry_id
         dev_name = self._target_device or "Device"
@@ -374,14 +403,14 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             btn_name = user_input.get("button_name", "").strip()
             repeats = user_input.get("repeats", DEFAULT_REPEATS)
+            min_rssi = user_input.get("min_rssi", self._learn_min_rssi)
             if not btn_name:
                 errors["button_name"] = "button_name_required"
             else:
-                from . import async_start_learning_flow
-                await async_start_learning_flow(
-                    self.hass, entry_id, btn_name, dev_name, repeats=int(repeats)
-                )
-                return self.async_create_entry(title="", data={})
+                self._learn_button_name = btn_name
+                self._learn_repeats = int(repeats)
+                self._learn_min_rssi = int(min_rssi)
+                return await self.async_step_device_learn_record()
 
         schema = vol.Schema(
             {
@@ -394,6 +423,15 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                         mode=NumberSelectorMode.BOX,
                     )
                 ),
+                vol.Optional("min_rssi", default=self._learn_min_rssi): NumberSelector(
+                    NumberSelectorConfig(
+                        min=-90,
+                        max=-30,
+                        step=5,
+                        unit_of_measurement="dBm",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
             }
         )
 
@@ -402,6 +440,332 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             data_schema=schema,
             description_placeholders={"device_name": dev_name},
             errors=errors,
+        )
+
+    async def async_step_device_learn_record(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 2: Start manual 5-second recording when the user is ready."""
+        entry_id = self.config_entry.entry_id
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+
+        if user_input is not None and client:
+            samples: list[str] = []
+            decoded_samples: list[dict[str, Any]] = []
+            learn_rssi = self._learn_min_rssi
+
+            def on_capture(event_data: dict[str, Any]) -> None:
+                event_type = event_data.get("type")
+                if event_type in ("rx_code", "rx_raw"):
+                    payload = event_data.get("payload", {})
+                    pkt_rssi = payload.get("rssi") if payload else None
+                    if pkt_rssi is None:
+                        pkt_rssi = client.last_rssi
+                    if pkt_rssi is not None and pkt_rssi < learn_rssi:
+                        _LOGGER.debug(
+                            "Dropped weak learning sample: RSSI %s < %s dBm",
+                            pkt_rssi,
+                            learn_rssi,
+                        )
+                        return
+
+                    raw = client.last_code or ""
+                    if raw:
+                        pulse_parts = [p.strip() for p in raw.split(",") if p.strip()]
+                        if len(pulse_parts) >= 16:
+                            samples.append(raw)
+                    if payload and "code" in payload and "bits" in payload:
+                        decoded_samples.append({
+                            "code": payload["code"],
+                            "bits": payload["bits"],
+                            "protocol": payload.get("protocol", 1),
+                            "pulse_length": payload.get("pulse_length", 350),
+                        })
+
+            prev_mode = client.rx_mode
+            prev_rssi = client.min_rssi
+            # Restrict receiver sensitivity strictly for learning to reject weak noise/distant remotes
+            await client.async_set_config(min_rssi=learn_rssi, rx_mode="Learn Mode")
+            remove_listener = client.register_listener(on_capture)
+            try:
+                # Capture continuous button press bursts for 5 seconds
+                await asyncio.sleep(5.0)
+            finally:
+                remove_listener()
+                # Immediately restore normal squelch and mode for standard household reception
+                await client.async_set_config(min_rssi=prev_rssi, rx_mode=prev_mode or RX_MODE_ALL)
+
+            from . import _analyze_learning_consensus
+            result_code, desc = _analyze_learning_consensus(samples, decoded_samples)
+
+            if not result_code:
+                self._record_error_desc = desc
+                self._record_sample_count = len(samples)
+                return await self.async_step_device_learn_failed()
+
+            self._candidate_code = result_code
+            self._candidate_desc = desc
+            return await self.async_step_device_learn_verify()
+
+        schema = vol.Schema({})
+
+        return self.async_show_form(
+            step_id="device_learn_record",
+            data_schema=schema,
+            description_placeholders={
+                "device_name": dev_name,
+                "button_name": btn_name,
+                "learn_rssi": str(self._learn_min_rssi),
+            },
+        )
+
+    async def async_step_device_learn_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Screen shown if 5-second continuous capture did not find consensus."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        menu: dict[str, str] = {}
+        if is_es:
+            menu["device_learn_record"] = "Reintentar Grabacion (5 segundos)"
+            menu["device_learn_tune_rssi"] = f"Ajustar Filtro de Potencia (Actual: {self._learn_min_rssi} dBm)"
+            menu["device_learn_button"] = "Cambiar Nombre del Boton"
+            menu["device_menu"] = f"Volver al Menu de {dev_name}"
+        else:
+            menu["device_learn_record"] = "Retry Recording (5 seconds)"
+            menu["device_learn_tune_rssi"] = f"Tune Signal Power Filter (Current: {self._learn_min_rssi} dBm)"
+            menu["device_learn_button"] = "Change Button Name"
+            menu["device_menu"] = f"Return to {dev_name} Menu"
+
+        return self.async_show_menu(
+            step_id="device_learn_failed",
+            menu_options=menu,
+            description_placeholders={
+                "button_name": btn_name,
+                "error_reason": self._record_error_desc or "Interferencias o senal debil",
+                "sample_count": str(self._record_sample_count),
+                "device_name": dev_name,
+                "learn_rssi": str(self._learn_min_rssi),
+            },
+        )
+
+    async def async_step_device_learn_tune_rssi(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step to adjust learning squelch/power filter exclusively for recording."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+
+        if user_input is not None:
+            self._learn_min_rssi = int(user_input.get("learn_min_rssi", self._learn_min_rssi))
+            return await self.async_step_device_learn_record()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    "learn_min_rssi",
+                    default=self._learn_min_rssi,
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=-90,
+                        max=-30,
+                        step=5,
+                        unit_of_measurement="dBm",
+                        mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="device_learn_tune_rssi",
+            data_schema=schema,
+            description_placeholders={
+                "device_name": dev_name,
+                "button_name": btn_name,
+                "current_rssi": str(self._learn_min_rssi),
+            },
+        )
+
+    async def async_step_device_learn_verify(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 3: Verification single-click check in-dialog."""
+        entry_id = self.config_entry.entry_id
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+
+        if user_input is not None and client:
+            from . import _codes_match, _compare_raw_pulses
+            matched = False
+            matched_signal: Any = None
+            loop = asyncio.get_running_loop()
+            event_future: asyncio.Future[bool] = loop.create_future()
+
+            def on_verify(event_data: dict[str, Any]) -> None:
+                nonlocal matched, matched_signal
+                if event_future.done():
+                    return
+                event_type = event_data.get("type")
+                if event_type in ("rx_code", "rx_raw"):
+                    raw = client.last_code or ""
+                    payload = event_data.get("payload", {})
+                    rx_code = payload.get("code")
+                    rx_raw = raw or payload.get("raw") or ""
+
+                    cand = self._candidate_code
+                    is_match = False
+                    if isinstance(cand, dict):
+                        cand_code = cand.get("code")
+                        if cand_code is not None and rx_code is not None and _codes_match(cand_code, rx_code):
+                            is_match = True
+                        elif cand.get("type") == "rolling_code":
+                            base_id = cand.get("base_id")
+                            try:
+                                rx_int = int(rx_code)
+                                if base_id and (rx_int >> 8) == int(base_id):
+                                    is_match = True
+                            except (ValueError, TypeError):
+                                pass
+                        elif rx_raw and cand.get("raw"):
+                            if _compare_raw_pulses(rx_raw, cand["raw"]) >= 0.80:
+                                is_match = True
+                    elif isinstance(cand, str) and rx_raw:
+                        if _compare_raw_pulses(rx_raw, cand) >= 0.80:
+                            is_match = True
+
+                    if is_match:
+                        matched = True
+                        matched_signal = rx_code or rx_raw
+                        if not event_future.done():
+                            event_future.set_result(True)
+
+            remove_listener = client.register_listener(on_verify)
+            try:
+                await asyncio.wait_for(event_future, timeout=6.0)
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                remove_listener()
+
+            if not matched:
+                return await self.async_step_device_learn_verify_failed()
+
+            # Matched! Save code and create entity
+            full_cmd_name = f"{dev_name} - {btn_name}" if dev_name else btn_name
+            result_code = self._candidate_code
+            if isinstance(result_code, dict):
+                result_code["device"] = dev_name
+                result_code["command"] = btn_name
+                result_code["repeats"] = int(self._learn_repeats)
+            else:
+                result_code = {
+                    "type": "raw",
+                    "raw": result_code,
+                    "device": dev_name,
+                    "command": btn_name,
+                    "repeats": int(self._learn_repeats),
+                }
+
+            saved = entry_data["saved_codes"]
+            saved[full_cmd_name] = result_code
+            devices_list = saved.setdefault("__devices__", [])
+            if dev_name not in devices_list:
+                devices_list.append(dev_name)
+
+            await entry_data["store"].async_save(saved)
+
+            if entry_data.get("add_button_callback"):
+                entry_data["add_button_callback"](full_cmd_name)
+
+            if dev_name:
+                if entry_data.get("add_device_sensor_callback"):
+                    try:
+                        entry_data["add_device_sensor_callback"](dev_name)
+                    except Exception:
+                        pass
+                device_button_listeners = entry_data.get("device_button_listeners", {})
+                listener = device_button_listeners.get(dev_name.lower())
+                if listener:
+                    try:
+                        listener(btn_name, client.last_rssi, matched_signal)
+                    except Exception:
+                        pass
+
+            return await self.async_step_device_learn_success()
+
+        schema = vol.Schema({})
+
+        return self.async_show_form(
+            step_id="device_learn_verify",
+            data_schema=schema,
+            description_placeholders={
+                "candidate_desc": self._candidate_desc or "Senal capturada",
+                "button_name": btn_name,
+                "device_name": dev_name,
+            },
+        )
+
+    async def async_step_device_learn_verify_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Screen shown when verification single-click did not match or timed out."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        menu: dict[str, str] = {}
+        if is_es:
+            menu["device_learn_verify"] = "Reintentar Comprobacion (pulsar 1 vez)"
+            menu["device_learn_record"] = "Volver a Grabar (5 segundos continuos)"
+            menu["device_menu"] = f"Cancelar y volver al menu de {dev_name}"
+        else:
+            menu["device_learn_verify"] = "Retry Verification (Press 1 time)"
+            menu["device_learn_record"] = "Re-record (5 seconds hold)"
+            menu["device_menu"] = f"Cancel and return to {dev_name} menu"
+
+        return self.async_show_menu(
+            step_id="device_learn_verify_failed",
+            menu_options=menu,
+            description_placeholders={
+                "button_name": btn_name,
+                "device_name": dev_name,
+            },
+        )
+
+    async def async_step_device_learn_success(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Screen shown after successful learning & verification."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        menu: dict[str, str] = {}
+        if is_es:
+            menu["device_learn_button"] = f"Aprender otro boton para {dev_name}"
+            menu["device_menu"] = f"Volver al menu de {dev_name}"
+            menu["finish"] = "Finalizar y Cerrar"
+        else:
+            menu["device_learn_button"] = f"Learn another button for {dev_name}"
+            menu["device_menu"] = f"Return to {dev_name} menu"
+            menu["finish"] = "Finish and Close"
+
+        return self.async_show_menu(
+            step_id="device_learn_success",
+            menu_options=menu,
+            description_placeholders={
+                "button_name": btn_name,
+                "candidate_desc": self._candidate_desc or "Senal confirmada",
+                "device_name": dev_name,
+            },
         )
 
     async def async_step_device_configure_button(
@@ -437,19 +801,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                         "repeats": int(new_repeats),
                     }
                 await entry_data["store"].async_save(saved)
-
-                try:
-                    from homeassistant.components import persistent_notification
-                    persistent_notification.async_create(
-                        self.hass,
-                        f"Configured **{chosen_btn}** on **{dev_name}** with **{new_repeats} repetitions**.",
-                        title=f"Button Configured: {chosen_btn}",
-                        notification_id=f"{DOMAIN}_btn_cfg_{chosen_btn.lower().replace(' ', '_')}",
-                    )
-                except Exception:
-                    pass
-
-                return self.async_create_entry(title="", data={})
+                self._menu_message = f"Repeticiones de '{chosen_btn}' actualizadas a {new_repeats}."
+                return await self.async_step_device_menu()
 
         first_key = buttons[btn_list[0]]
         first_val = saved.get(first_key, {})
@@ -491,7 +844,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         buttons = self._get_device_buttons(dev_name)
 
         if not buttons:
-            return self.async_abort(reason="no_buttons_found")
+            self._menu_message = f"No quedan botones para eliminar en {dev_name}."
+            return await self.async_step_device_menu()
 
         btn_list = sorted(list(buttons.keys()))
 
@@ -501,7 +855,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             if full_key:
                 from . import async_delete_command_flow
                 await async_delete_command_flow(self.hass, entry_id, full_key)
-                return self.async_create_entry(title="", data={})
+                self._menu_message = f"Boton '{chosen_btn}' eliminado correctamente de {dev_name}."
+                return await self.async_step_device_menu()
 
         schema = vol.Schema(
             {

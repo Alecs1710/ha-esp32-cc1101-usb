@@ -352,6 +352,7 @@ async def async_start_learning_flow(
     name: str,
     device_name: str | None = None,
     repeats: int | None = None,
+    min_rssi: int | None = None,
 ) -> None:
     """Start continuous 5-second RF learning flow for a given command name."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
@@ -362,7 +363,10 @@ async def async_start_learning_flow(
         raise HomeAssistantError("Command name cannot be empty")
 
     dev = (device_name or "Dispositivo").strip()
-    prev_mode = entry_data["client"].rx_mode
+    client: Esp32Cc1101Client = entry_data["client"]
+    prev_mode = client.rx_mode
+    prev_rssi = client.min_rssi
+    learn_rssi = min_rssi if min_rssi is not None else -60
 
     # Cancel any previous learning timers
     old_learning = entry_data.get("learning")
@@ -384,17 +388,21 @@ async def async_start_learning_flow(
         "decoded_samples": [],
         "last_sample_time": 0.0,
         "prev_mode": prev_mode,
+        "prev_rssi": prev_rssi,
+        "learn_rssi": learn_rssi,
         "candidate_code": None,
         "candidate_desc": "",
         "timer_task": timer_task,
         "verify_task": None,
     }
-    await entry_data["client"].async_set_config(rx_mode="Learn Mode")
+    # Restrict CC1101 squelch specifically for learning mode
+    await client.async_set_config(min_rssi=learn_rssi, rx_mode="Learn Mode")
 
     display_label = f"{dev} - {name}" if dev else name
     _LOGGER.info(
-        "Starting continuous RF learning for '%s' (Hold button for 5 seconds)",
+        "Starting continuous RF learning for '%s' (Hold button for 5 seconds, min_rssi=%d dBm)",
         display_label,
+        learn_rssi,
     )
 
     if "update_learning_sensor_callback" in entry_data:
@@ -407,6 +415,7 @@ async def async_start_learning_flow(
         hass,
         f"⏳ **Paso 1 de 2: Grabando señal de `{display_label}`**\n\n"
         f"👉 **Mantén pulsado el botón en tu mando físico durante 5 segundos de forma CONTINUA.**\n\n"
+        f"📶 *Filtro de potencia activo:* `{learn_rssi} dBm` (solo señales cercanas).\n\n"
         f"*(Mantén el mando a 10–30 cm del transceptor CC1101 para una captura limpia sin interferencias).* ",
         title=f"Grabando Botón: {display_label} (Paso 1/2)",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
@@ -416,7 +425,7 @@ async def async_start_learning_flow(
 async def async_cancel_learning_flow(
     hass: HomeAssistant, entry_id: str
 ) -> None:
-    """Cancel ongoing RF learning flow."""
+    """Cancel ongoing RF learning flow and restore normal squelch."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
     if not entry_data:
         return
@@ -429,7 +438,9 @@ async def async_cancel_learning_flow(
             if t and not t.done():
                 t.cancel()
         prev_mode = learning.get("prev_mode", RX_MODE_ALL)
-        await entry_data["client"].async_set_config(rx_mode=prev_mode)
+        prev_rssi = learning.get("prev_rssi", -75)
+        client = entry_data["client"]
+        await client.async_set_config(min_rssi=prev_rssi, rx_mode=prev_mode)
         persistent_notification.async_dismiss(
             hass, notification_id=f"{DOMAIN}_learning_{entry_id}"
         )
@@ -711,7 +722,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_id, _ = _get_entry_data(hass, call.data.get("config_entry_id"))
             name = call.data["name"].strip()
             device = call.data.get("device")
-            await async_start_learning_flow(hass, entry_id, name, device)
+            repeats = call.data.get("repeats")
+            min_rssi = call.data.get("min_rssi")
+            await async_start_learning_flow(hass, entry_id, name, device, repeats=repeats, min_rssi=min_rssi)
 
         async def async_send_command_service(call: ServiceCall) -> None:
             entry_id, data = _get_entry_data(hass, call.data.get("config_entry_id"))
@@ -919,8 +932,9 @@ async def _async_learning_recording_timer(
         learning["active"] = False
         learning["phase"] = "failed"
         prev_mode = learning.get("prev_mode", RX_MODE_ALL)
+        prev_rssi = learning.get("prev_rssi", DEFAULT_MIN_RSSI)
         client: Esp32Cc1101Client = entry_data["client"]
-        hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
+        hass.async_create_task(client.async_set_config(min_rssi=prev_rssi, rx_mode=prev_mode))
 
         if "update_learning_sensor_callback" in entry_data:
             try:
@@ -942,6 +956,7 @@ async def _async_learning_recording_timer(
             f"👉 **Consejos:**\n"
             f"- Mantén el mando a 10–30 cm del transceptor CC1101.\n"
             f"- Mantén el botón pulsado firmemente y sin soltar durante los 5 segundos completos.\n"
+            f"- Si hay interferencias de otros mandos, puedes ajustar el filtro de potencia de señal para restringir solo a señales potentes.\n"
             f"- Vuelve a intentar el aprendizaje desde el menú.",
             title=f"Error al Aprender: {display_label}",
             notification_id=f"{DOMAIN}_learning_{entry_id}",
@@ -954,9 +969,10 @@ async def _async_learning_recording_timer(
     learning["candidate_desc"] = desc
     learning["last_sample_time"] = time.time()  # reset debounce for single click
 
-    # Listen passively in RX_MODE_ALL to verify real detection
+    # Listen passively in RX_MODE_ALL with restored normal squelch to verify real detection
+    prev_rssi = learning.get("prev_rssi", DEFAULT_MIN_RSSI)
     client = entry_data["client"]
-    hass.async_create_task(client.async_set_config(rx_mode=RX_MODE_ALL))
+    hass.async_create_task(client.async_set_config(min_rssi=prev_rssi, rx_mode=RX_MODE_ALL))
 
     if "update_learning_sensor_callback" in entry_data:
         try:
@@ -1006,8 +1022,9 @@ async def _async_learning_verification_timeout(
     learning["active"] = False
     learning["phase"] = "timeout"
     prev_mode = learning.get("prev_mode", RX_MODE_ALL)
+    prev_rssi = learning.get("prev_rssi", DEFAULT_MIN_RSSI)
     client: Esp32Cc1101Client = entry_data["client"]
-    hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
+    hass.async_create_task(client.async_set_config(min_rssi=prev_rssi, rx_mode=prev_mode))
 
     if "update_learning_sensor_callback" in entry_data:
         try:
@@ -1057,8 +1074,9 @@ async def _async_learning_verification_success(
     learning["active"] = False
     learning["phase"] = "done"
     prev_mode = learning.get("prev_mode", RX_MODE_ALL)
+    prev_rssi = learning.get("prev_rssi", DEFAULT_MIN_RSSI)
     client: Esp32Cc1101Client = entry_data["client"]
-    hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
+    hass.async_create_task(client.async_set_config(min_rssi=prev_rssi, rx_mode=prev_mode))
 
     full_cmd_name = display_label
     if isinstance(result_code, dict):
@@ -1159,6 +1177,21 @@ async def _handle_learning_sample(
     last_sample_time = learning.get("last_sample_time", 0.0)
 
     if phase == "recording":
+        learn_rssi = learning.get("learn_rssi")
+        if learn_rssi is not None:
+            pkt_rssi = payload.get("rssi") if payload else None
+            if pkt_rssi is None:
+                client_inst = entry_data.get("client")
+                if client_inst:
+                    pkt_rssi = client_inst.last_rssi
+            if pkt_rssi is not None and pkt_rssi < learn_rssi:
+                _LOGGER.debug(
+                    "Dropped weak learning sample: RSSI %s < %s dBm",
+                    pkt_rssi,
+                    learn_rssi,
+                )
+                return
+
         # During continuous 5s hold, bursts arrive every ~40-100ms.
         # Debounce with 25ms to avoid exact duplicate reads in 1ms.
         if (now - last_sample_time) < 0.025:

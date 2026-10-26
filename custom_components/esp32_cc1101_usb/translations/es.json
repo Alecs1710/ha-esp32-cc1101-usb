@@ -47,11 +47,13 @@
       },
       "device_menu": {
         "title": "Configurar Dispositivo: {device_name}",
-        "description": "Selecciona una acción para este dispositivo.",
+        "description": "{status_msg}Selecciona una acción para este dispositivo.",
         "menu_options": {
           "device_learn_button": "Aprender Nuevo Botón",
           "device_configure_button": "Configurar Repeticiones de Botón",
-          "device_delete_button": "Eliminar Botón de este Dispositivo"
+          "device_delete_button": "Eliminar Botón de este Dispositivo",
+          "manage_devices": "Cambiar de Dispositivo",
+          "finish": "Finalizar y Cerrar"
         }
       },
       "create_device": {
@@ -63,10 +65,54 @@
       },
       "device_learn_button": {
         "title": "Aprender Botón RF: {device_name}",
-        "description": "Introduce el nombre del botón y repeticiones. Al pulsar Enviar, mantén pulsado el botón en tu mando físico durante 5 segundos continuos. Tras el análisis, Home Assistant te pedirá pulsar 1 vez para verificarlo antes de guardarlo.",
+        "description": "Paso 1 de 3: Introduce el nombre del botón, repeticiones y el filtro de potencia de señal para el aprendizaje. Al pulsar Enviar, pasarás a la pantalla con el botón para empezar a grabar manualmente.",
         "data": {
           "button_name": "Nombre del Botón / Comando",
-          "repeats": "Repeticiones de Transmisión"
+          "repeats": "Repeticiones de Transmisión",
+          "min_rssi": "Filtro de Potencia para Grabación (dBm)"
+        }
+      },
+      "device_learn_record": {
+        "title": "Grabar Botón: {button_name}",
+        "description": "Estás a punto de grabar el botón '**{button_name}**' de **{device_name}**.\n\n📶 **Filtro de potencia de grabación:** `{learn_rssi} dBm` (solo aceptará señales potentes cercanas; tu sensibilidad habitual se restaurará automáticamente al terminar).\n\n👉 **Instrucciones:**\n1. Ten el mando a 10–30 cm del transceptor CC1101.\n2. Haz clic en **Enviar / Empezar Grabación** abajo cuando estés listo.\n3. En cuanto hagas clic, **mantén pulsado el botón de tu mando físico durante 5 segundos continuos**."
+      },
+      "device_learn_failed": {
+        "title": "Error al Grabar: {button_name}",
+        "description": "⚠️ No se detectó una señal consistente y estable.\n\n**Motivo:** {error_reason} ({sample_count} ráfagas recibidas).\n**Filtro de potencia actual:** {learn_rssi} dBm.\n\nSi hay ruido o señales de otros mandos interfiriendo, puedes ajustar el filtro de potencia para restringir estrictamente a señales potentes con el mando cerca de la antena.\n\n¿Qué deseas hacer?",
+        "menu_options": {
+          "device_learn_record": "Reintentar Grabación (5 segundos continuos)",
+          "device_learn_tune_rssi": "Ajustar Filtro de Potencia (Restringir Señal)",
+          "device_learn_button": "Cambiar Nombre del Botón",
+          "device_menu": "Volver al Menú del Dispositivo"
+        }
+      },
+      "device_learn_tune_rssi": {
+        "title": "Ajustar Filtro de Potencia: {button_name}",
+        "description": "Configura el filtro de potencia de señal (RSSI) exclusivamente para la grabación de este botón.\n\nValores más altos (ej: -50 dBm o -40 dBm) restringen la grabación estrictamente a señales potentes con el mando pegado a la antena, ignorando señales lejanas o ruidos.\n\nUna vez grabado, tu transceptor restaurará automáticamente su sensibilidad normal para recibir a distancia.",
+        "data": {
+          "learn_min_rssi": "Filtro de Potencia para Grabación (dBm)"
+        }
+      },
+      "device_learn_verify": {
+        "title": "Verificar Botón: {button_name}",
+        "description": "✅ Señal analizada con éxito: **{candidate_desc}**.\n\nAhora vamos a comprobar que Home Assistant detecta tu mando correctamente.\n\n👉 **Instrucciones:**\n1. Haz clic en **Enviar / Comprobar Pulsación** abajo.\n2. En cuanto hagas clic, pulsa el botón de tu mando físico **UNA SOLA VEZ**."
+      },
+      "device_learn_verify_failed": {
+        "title": "Verificación No Detectada: {button_name}",
+        "description": "⚠️ No se detectó la pulsación de confirmación dentro del tiempo de espera (o la señal recibida no coincidió).\n\nPara proteger tu sistema de señales erróneas o ruidos, el código **NO** se ha guardado.\n\n¿Qué deseas hacer?",
+        "menu_options": {
+          "device_learn_verify": "Reintentar Comprobación (pulsar 1 vez)",
+          "device_learn_record": "Volver a Grabar (5 segundos continuos)",
+          "device_menu": "Cancelar y volver al menú del dispositivo"
+        }
+      },
+      "device_learn_success": {
+        "title": "¡Botón Verificado con Éxito!",
+        "description": "🎉 El botón **{button_name}** ha sido verificado y guardado para **{device_name}**.\n\nSeñal confirmada: **{candidate_desc}**.\n\nSe ha creado la entidad botón en tu panel y se ha actualizado el sensor del dispositivo.\n\n¿Qué deseas hacer ahora?",
+        "menu_options": {
+          "device_learn_button": "Aprender otro botón para este dispositivo",
+          "device_menu": "Volver al menú del dispositivo",
+          "finish": "Finalizar y Cerrar"
         }
       },
       "device_configure_button": {

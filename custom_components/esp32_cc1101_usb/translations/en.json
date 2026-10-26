@@ -47,11 +47,13 @@
       },
       "device_menu": {
         "title": "Configure Device: {device_name}",
-        "description": "Select an action for this device.",
+        "description": "{status_msg}Select an action for this device.",
         "menu_options": {
           "device_learn_button": "Learn New Button",
           "device_configure_button": "Configure Button Repetitions",
-          "device_delete_button": "Delete Button from Device"
+          "device_delete_button": "Delete Button from Device",
+          "manage_devices": "Change Device",
+          "finish": "Finish and Close"
         }
       },
       "create_device": {
@@ -63,10 +65,54 @@
       },
       "device_learn_button": {
         "title": "Learn RF Button: {device_name}",
-        "description": "Enter the button name and repeats. Once submitted, hold down the button on your physical remote for 5 continuous seconds. Home Assistant will then prompt you to press it once to verify before saving.",
+        "description": "Step 1 of 3: Enter the button name, repeats, and learning signal power filter. When submitted, you will get a button to manually start recording.",
         "data": {
           "button_name": "Button / Command Name",
-          "repeats": "Transmit Repetitions"
+          "repeats": "Transmit Repetitions",
+          "min_rssi": "Learning Signal Power Filter (dBm)"
+        }
+      },
+      "device_learn_record": {
+        "title": "Record Button: {button_name}",
+        "description": "Ready to record button '**{button_name}**' for **{device_name}**.\n\n📶 **Active power filter:** `{learn_rssi} dBm` (only captures strong nearby signals; your normal sensitivity is automatically restored afterward).\n\n👉 **Instructions:**\n1. Hold your remote 10–30 cm from CC1101.\n2. Click **Submit / Start Recording** below when ready.\n3. As soon as you click, **hold down the button on your remote continuously for 5 seconds**."
+      },
+      "device_learn_failed": {
+        "title": "Recording Failed: {button_name}",
+        "description": "⚠️ Could not detect a consistent, clean signal.\n\n**Reason:** {error_reason} ({sample_count} bursts received).\n**Current power filter:** {learn_rssi} dBm.\n\nIf there is noise or distant remotes interfering, you can tune the power filter to restrict strictly to strong signals near the antenna.\n\nWhat would you like to do?",
+        "menu_options": {
+          "device_learn_record": "Retry Recording (5 seconds hold)",
+          "device_learn_tune_rssi": "Tune Signal Power Filter (Strong Signals)",
+          "device_learn_button": "Change Button Name",
+          "device_menu": "Return to Device Menu"
+        }
+      },
+      "device_learn_tune_rssi": {
+        "title": "Tune Signal Power Filter: {button_name}",
+        "description": "Configure the signal power threshold (RSSI) exclusively for recording this button.\n\nHigher values (e.g. -50 dBm or -40 dBm) strictly restrict recording to strong signals held right next to the CC1101, ignoring ambient RF noise and neighbor remotes.\n\nOnce learned, normal sensitivity is automatically restored for long-range remote reception.",
+        "data": {
+          "learn_min_rssi": "Temporary Power Filter (dBm)"
+        }
+      },
+      "device_learn_verify": {
+        "title": "Verify Button: {button_name}",
+        "description": "✅ Signal captured: **{candidate_desc}**.\n\nNow we will verify that Home Assistant detects your remote correctly.\n\n👉 **Instructions:**\n1. Click **Submit / Check Press** below.\n2. As soon as you click, press your remote button **ONCE**."
+      },
+      "device_learn_verify_failed": {
+        "title": "Verification Not Detected: {button_name}",
+        "description": "⚠️ Single press was not detected within the timeout (or signal did not match).\n\nTo prevent corrupt codes, candidate code has **NOT** been saved.\n\nWhat would you like to do?",
+        "menu_options": {
+          "device_learn_verify": "Retry Verification (Press 1 time)",
+          "device_learn_record": "Re-record (5 seconds continuous hold)",
+          "device_menu": "Cancel and return to device menu"
+        }
+      },
+      "device_learn_success": {
+        "title": "Button Verified Successfully!",
+        "description": "🎉 Button **{button_name}** verified and saved for **{device_name}**.\n\nConfirmed signal: **{candidate_desc}**.\n\nA button entity has been created on your dashboard and device status sensor updated.\n\nWhat would you like to do next?",
+        "menu_options": {
+          "device_learn_button": "Learn another button for this device",
+          "device_menu": "Return to device menu",
+          "finish": "Finish and Close"
         }
       },
       "device_configure_button": {
