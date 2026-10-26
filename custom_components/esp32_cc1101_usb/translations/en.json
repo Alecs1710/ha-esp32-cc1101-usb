@@ -32,10 +32,28 @@
     "step": {
       "init": {
         "title": "ESP32 CC1101 RF Studio",
-        "description": "Choose an action to configure devices or tune radio settings.",
+        "description": "Choose an action to learn buttons, manage devices, or tune radio settings.",
         "menu_options": {
+          "learn_button": "Learn Remote Button",
+          "select_device": "Manage Device Buttons",
           "create_device": "Create New RF Device",
           "radio_settings": "CC1101 Radio Parameters & Tuning"
+        }
+      },
+      "select_device": {
+        "title": "Select Device",
+        "description": "Choose the device whose buttons you want to manage, learn, or reconfigure.",
+        "data": {
+          "device_name": "Device"
+        }
+      },
+      "learn_button": {
+        "title": "Learn Remote Button",
+        "description": "Select or type the device, the button name, and desired repetitions. Once submitted, press your physical remote button 3 times.",
+        "data": {
+          "device_name": "Device (choose existing or type new)",
+          "button_name": "Button Name / Command",
+          "repeats": "Transmit Repetitions"
         }
       },
       "device_menu": {
