@@ -68,7 +68,19 @@ async def async_setup_entry(
             created_device_sensors[dev_lower] = dev_sensor
             async_add_entities([dev_sensor])
 
+    async def remove_device_sensor(dev_to_remove: str) -> None:
+        if not dev_to_remove:
+            return
+        dev_lower = dev_to_remove.lower()
+        sensor = created_device_sensors.pop(dev_lower, None)
+        if sensor and getattr(sensor, "hass", None) is not None:
+            try:
+                await sensor.async_remove()
+            except Exception as err:
+                _LOGGER.debug("Could not remove device sensor for '%s': %s", dev_to_remove, err)
+
     entry_data["add_device_sensor_callback"] = add_device_sensor
+    entry_data["remove_device_sensor_callback"] = remove_device_sensor
 
 
 class Esp32LastCodeSensor(SensorEntity):

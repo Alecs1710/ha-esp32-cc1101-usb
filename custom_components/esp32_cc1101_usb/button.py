@@ -53,9 +53,23 @@ async def async_setup_entry(
     async def remove_command_button(cmd_name: str) -> None:
         btn = created_command_entities.pop(cmd_name, None)
         if not btn:
-            for k in list(created_command_entities.keys()):
-                if k.lower() == cmd_name.lower() or k.lower().replace(" ", "_") == cmd_name.lower().replace(" ", "_"):
-                    btn = created_command_entities.pop(k)
+            c_low = cmd_name.lower().strip()
+            c_slug = c_low.replace(" ", "_")
+            for k, entity in list(created_command_entities.items()):
+                k_low = k.lower().strip()
+                k_slug = k_low.replace(" ", "_")
+                short_k = k.split(" - ", 1)[1].lower().strip() if " - " in k else k_low
+                short_slug = short_k.replace(" ", "_")
+                if (
+                    k_low == c_low
+                    or k_slug == c_slug
+                    or short_k == c_low
+                    or short_slug == c_slug
+                    or entity.entity_id == cmd_name
+                    or entity.unique_id.endswith(f"_{c_slug}")
+                    or entity.unique_id.endswith(f"_{short_slug}")
+                ):
+                    btn = created_command_entities.pop(k, None)
                     break
         if btn and getattr(btn, "hass", None) is not None:
             try:

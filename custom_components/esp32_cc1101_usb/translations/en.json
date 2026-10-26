@@ -34,8 +34,40 @@
         "title": "ESP32 CC1101 RF Studio",
         "description": "Choose an action to manage your RF devices or tune radio settings.",
         "menu_options": {
-          "manage_devices": "Manage RF Devices & Remotes",
+          "manage_devices": "Manage & Learn Buttons by Device",
+          "delete_menu": "Delete RF Buttons or Devices",
           "radio_settings": "CC1101 Radio Parameters & Tuning"
+        }
+      },
+      "delete_menu": {
+        "title": "Delete RF Buttons or Devices",
+        "description": "{status_msg}Select what you would like to delete from your system.",
+        "menu_options": {
+          "delete_single_button": "Delete a Specific Button",
+          "delete_device": "Delete an Entire Device",
+          "init": "Return to Main Menu",
+          "finish": "Finish and Close"
+        }
+      },
+      "delete_single_button": {
+        "title": "Delete RF Button",
+        "description": "Select the button you wish to permanently delete from Home Assistant.",
+        "data": {
+          "button_name": "Button to Delete"
+        }
+      },
+      "delete_device": {
+        "title": "Delete Entire RF Device",
+        "description": "⚠️ Deleting a device will remove all of its buttons, its sensor, and its device card from Home Assistant.",
+        "data": {
+          "device_name": "Device to Delete"
+        }
+      },
+      "device_delete_this_device": {
+        "title": "Delete Device: {device_name}",
+        "description": "⚠️ Are you sure you want to delete **{device_name}** and all of its learned buttons?",
+        "data": {
+          "confirm": "Confirm permanent deletion"
         }
       },
       "manage_devices": {
@@ -52,6 +84,7 @@
           "device_learn_button": "Learn New Button",
           "device_configure_button": "Configure Button Repetitions",
           "device_delete_button": "Delete Button from Device",
+          "device_delete_this_device": "Delete Entire Device",
           "manage_devices": "Change Device",
           "finish": "Finish and Close"
         }

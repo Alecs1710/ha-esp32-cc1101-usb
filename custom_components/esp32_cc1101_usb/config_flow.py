@@ -283,14 +283,16 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 devs.add(v["device"].strip())
             elif " - " in k:
                 devs.add(k.split(" - ", 1)[0].strip())
+            else:
+                devs.add("Learned Remotes")
         return sorted([d for d in devs if d])
 
-    def _get_device_buttons(self, dev_name: str) -> dict[str, str]:
-        """Return dict of {short_button_name: full_storage_key} for a device."""
+    def _get_all_buttons(self) -> dict[str, str]:
+        """Return dict of {display_label: full_storage_key} for ALL saved buttons across all devices."""
         entry_id = self.config_entry.entry_id
         entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
         saved = entry_data.get("saved_codes", {})
-        buttons: dict[str, str] = {}
+        all_buttons: dict[str, str] = {}
         for full_key, val in saved.items():
             if full_key.startswith("__"):
                 continue
@@ -303,7 +305,37 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 curr_dev, curr_cmd = full_key.split(" - ", 1)
                 curr_dev = curr_dev.strip()
                 curr_cmd = curr_cmd.strip()
-            if curr_dev.lower() == dev_name.lower():
+
+            label = f"[{curr_dev}] {curr_cmd}" if curr_dev else curr_cmd
+            all_buttons[label] = full_key
+        return dict(sorted(all_buttons.items()))
+
+    def _get_device_buttons(self, dev_name: str) -> dict[str, str]:
+        """Return dict of {short_button_name: full_storage_key} for a device."""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+        buttons: dict[str, str] = {}
+        d_lower = dev_name.lower().strip()
+        for full_key, val in saved.items():
+            if full_key.startswith("__"):
+                continue
+            curr_dev = ""
+            curr_cmd = full_key
+            if isinstance(val, dict) and val.get("device"):
+                curr_dev = val["device"].strip()
+                curr_cmd = val.get("command", full_key).strip()
+            elif " - " in full_key:
+                curr_dev, curr_cmd = full_key.split(" - ", 1)
+                curr_dev = curr_dev.strip()
+                curr_cmd = curr_cmd.strip()
+            else:
+                curr_dev = "Learned Remotes"
+
+            if (
+                curr_dev.lower() == d_lower
+                or (d_lower in ("learned remotes", "dispositivo", "mandos rf") and curr_dev.lower() in ("learned remotes", "dispositivo", "mandos rf", ""))
+            ):
                 buttons[curr_cmd] = full_key
         return buttons
 
@@ -334,12 +366,14 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
         if is_es:
             menu = {
-                "manage_devices": "Gestionar Dispositivos y Mandos RF",
+                "manage_devices": "Gestionar y Aprender Botones por Dispositivo",
+                "delete_menu": "Eliminar Botones o Dispositivos RF",
                 "radio_settings": "Parametros de Radio CC1101",
             }
         else:
             menu = {
-                "manage_devices": "Manage RF Devices & Remotes",
+                "manage_devices": "Manage & Learn Buttons by Device",
+                "delete_menu": "Delete RF Buttons or Devices",
                 "radio_settings": "CC1101 Radio Parameters & Tuning",
             }
 
@@ -362,6 +396,7 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             if buttons:
                 menu["device_configure_button"] = "Configurar Repeticiones de Boton"
                 menu["device_delete_button"] = "Eliminar Boton de este Dispositivo"
+            menu["device_delete_this_device"] = f"Eliminar este Dispositivo Completo ({dev_name})"
             menu["manage_devices"] = "Cambiar de Dispositivo"
             menu["finish"] = "Finalizar y Cerrar"
         else:
@@ -371,6 +406,7 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             if buttons:
                 menu["device_configure_button"] = "Configure Button Repetitions"
                 menu["device_delete_button"] = "Delete Button from Device"
+            menu["device_delete_this_device"] = f"Delete this Device ({dev_name})"
             menu["manage_devices"] = "Change Device"
             menu["finish"] = "Finish and Close"
 
@@ -874,6 +910,141 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             data_schema=schema,
             description_placeholders={"device_name": dev_name},
             errors=errors,
+        )
+
+    async def async_step_device_delete_this_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm deletion of this device and all its associated buttons."""
+        entry_id = self.config_entry.entry_id
+        dev_name = self._target_device or "Device"
+
+        if user_input is not None:
+            if user_input.get("confirm", True):
+                from . import async_delete_device_flow
+                await async_delete_device_flow(self.hass, entry_id, dev_name)
+                self._menu_message = f"Dispositivo '{dev_name}' y todos sus botones han sido eliminados."
+                self._target_device = None
+                return await self.async_step_manage_devices()
+            return await self.async_step_device_menu()
+
+        schema = vol.Schema(
+            {
+                vol.Required("confirm", default=True): bool,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="device_delete_this_device",
+            data_schema=schema,
+            description_placeholders={"device_name": dev_name},
+        )
+
+    async def async_step_delete_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Global menu to delete buttons or devices across the integration."""
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+        all_buttons = self._get_all_buttons()
+        all_devs = self._get_all_devices()
+
+        if is_es:
+            menu = {}
+            if all_buttons:
+                menu["delete_single_button"] = f"Eliminar un Boton ({len(all_buttons)} disponibles)"
+            if all_devs:
+                menu["delete_device"] = f"Eliminar un Dispositivo Completo ({len(all_devs)} disponibles)"
+            menu["init"] = "Volver al Menu Principal"
+            menu["finish"] = "Finalizar y Cerrar"
+        else:
+            menu = {}
+            if all_buttons:
+                menu["delete_single_button"] = f"Delete a Button ({len(all_buttons)} available)"
+            if all_devs:
+                menu["delete_device"] = f"Delete an Entire Device ({len(all_devs)} available)"
+            menu["init"] = "Return to Main Menu"
+            menu["finish"] = "Finish and Close"
+
+        status_msg = f"{self._menu_message}\n\n" if self._menu_message else ""
+        self._menu_message = None
+
+        return self.async_show_menu(
+            step_id="delete_menu",
+            menu_options=menu,
+            description_placeholders={"status_msg": status_msg},
+        )
+
+    async def async_step_delete_single_button(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Delete any button across all devices."""
+        entry_id = self.config_entry.entry_id
+        all_buttons = self._get_all_buttons()
+
+        if not all_buttons:
+            self._menu_message = "No quedan botones para eliminar."
+            return await self.async_step_delete_menu()
+
+        btn_labels = list(all_buttons.keys())
+
+        if user_input is not None:
+            chosen_label = user_input.get("button_name")
+            full_key = all_buttons.get(chosen_label)
+            if full_key:
+                from . import async_delete_command_flow
+                await async_delete_command_flow(self.hass, entry_id, full_key)
+                self._menu_message = f"Boton '{chosen_label}' eliminado correctamente."
+                return await self.async_step_delete_menu()
+
+        schema = vol.Schema(
+            {
+                vol.Required("button_name", default=btn_labels[0]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[SelectOptionDict(value=b, label=b) for b in btn_labels],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="delete_single_button",
+            data_schema=schema,
+        )
+
+    async def async_step_delete_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Delete an entire device and all its buttons."""
+        entry_id = self.config_entry.entry_id
+        all_devs = self._get_all_devices()
+
+        if not all_devs:
+            self._menu_message = "No quedan dispositivos para eliminar."
+            return await self.async_step_delete_menu()
+
+        if user_input is not None:
+            chosen_dev = user_input.get("device_name")
+            if chosen_dev:
+                from . import async_delete_device_flow
+                await async_delete_device_flow(self.hass, entry_id, chosen_dev)
+                self._menu_message = f"Dispositivo '{chosen_dev}' y todos sus botones han sido eliminados correctamente."
+                return await self.async_step_delete_menu()
+
+        schema = vol.Schema(
+            {
+                vol.Required("device_name", default=all_devs[0]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[SelectOptionDict(value=d, label=d) for d in all_devs],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="delete_device",
+            data_schema=schema,
         )
 
     async def async_step_create_device(

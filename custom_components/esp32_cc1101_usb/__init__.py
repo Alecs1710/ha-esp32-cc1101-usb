@@ -540,6 +540,64 @@ async def async_delete_command_flow(
     )
 
 
+async def async_delete_device_flow(
+    hass: HomeAssistant, entry_id: str, dev_name: str
+) -> None:
+    """Delete a learned logical device and all its stored buttons."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        raise HomeAssistantError(f"Integration entry '{entry_id}' not found")
+    dev_name = dev_name.strip()
+    if not dev_name:
+        raise HomeAssistantError("Device name cannot be empty")
+
+    saved = entry_data.get("saved_codes", {})
+    keys_to_delete = []
+    for k, v in list(saved.items()):
+        if k.startswith("__"):
+            continue
+        code_dev = ""
+        if isinstance(v, dict) and v.get("device"):
+            code_dev = v["device"].strip()
+        elif " - " in k:
+            code_dev = k.split(" - ", 1)[0].strip()
+        if code_dev.lower() == dev_name.lower():
+            keys_to_delete.append(k)
+
+    for k in keys_to_delete:
+        try:
+            await async_delete_command_flow(hass, entry_id, k)
+        except Exception as err:
+            _LOGGER.debug("Could not delete code '%s' for device '%s': %s", k, dev_name, err)
+
+    devices_list = saved.get("__devices__", [])
+    for d in list(devices_list):
+        if d.lower() == dev_name.lower() or d.lower().replace(" ", "_") == dev_name.lower().replace(" ", "_"):
+            devices_list.remove(d)
+    await entry_data["store"].async_save(saved)
+
+    if entry_data.get("remove_device_sensor_callback"):
+        try:
+            await entry_data["remove_device_sensor_callback"](dev_name)
+        except Exception as err:
+            _LOGGER.debug("Could not remove device sensor for '%s': %s", dev_name, err)
+
+    try:
+        from homeassistant.helpers import device_registry as dr
+        dev_reg = dr.async_get(hass)
+        slug_dev = dev_name.lower().replace(" ", "_")
+        dev_ident = (DOMAIN, f"{entry_id}_dev_{slug_dev}")
+        dev_entry = dev_reg.async_get_device(identifiers={dev_ident})
+        if dev_entry:
+            dev_reg.async_remove_device(dev_entry.id)
+            _LOGGER.info("Removed device '%s' from Device Registry", dev_name)
+    except Exception as err:
+        _LOGGER.debug("Could not remove device from registry: %s", err)
+
+    if "device_button_listeners" in entry_data:
+        entry_data["device_button_listeners"].pop(dev_name.lower(), None)
+
+
 async def async_remove_config_entry_device(
     hass: HomeAssistant, config_entry: ConfigEntry, device_entry: dr.DeviceEntry
 ) -> bool:
@@ -902,6 +960,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             model="Learned RF Device",
             via_device=(DOMAIN, entry.entry_id),
         )
+
+    @callback
+    def _on_entity_registry_updated(event: Any) -> None:
+        if event.data.get("action") == "remove":
+            removed_ent_id = event.data.get("entity_id", "")
+            if not removed_ent_id.startswith("button."):
+                return
+            saved = entry_data.get("saved_codes", {})
+            to_delete = []
+            for full_key in list(saved.keys()):
+                if full_key.startswith("__"):
+                    continue
+                slug = full_key.lower().replace(" ", "_")
+                short = (full_key.split(" - ", 1)[1] if " - " in full_key else full_key).lower().replace(" ", "_")
+                if removed_ent_id.endswith(f"_{slug}") or removed_ent_id.endswith(f"_{short}"):
+                    to_delete.append(full_key)
+            if to_delete:
+                for k in to_delete:
+                    saved.pop(k, None)
+                    _LOGGER.info("Entity '%s' removed from HA -> removed RF code '%s' from storage", removed_ent_id, k)
+                hass.async_create_task(entry_data["store"].async_save(saved))
+
+    try:
+        from homeassistant.helpers import entity_registry as er
+        entry.async_on_unload(
+            hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _on_entity_registry_updated)
+        )
+    except Exception as err:
+        _LOGGER.debug("Could not register entity registry listener: %s", err)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

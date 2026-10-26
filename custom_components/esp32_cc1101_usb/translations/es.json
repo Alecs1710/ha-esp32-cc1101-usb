@@ -34,8 +34,40 @@
         "title": "ESP32 CC1101 RF Studio",
         "description": "Elige una acción para gestionar tus dispositivos o ajustar la radio.",
         "menu_options": {
-          "manage_devices": "Gestionar Dispositivos y Mandos RF",
+          "manage_devices": "Gestionar y Aprender Botones por Dispositivo",
+          "delete_menu": "Eliminar Botones o Dispositivos RF",
           "radio_settings": "Parámetros de Radio CC1101"
+        }
+      },
+      "delete_menu": {
+        "title": "Eliminar Botones o Dispositivos",
+        "description": "{status_msg}Selecciona qué deseas eliminar de tu sistema.",
+        "menu_options": {
+          "delete_single_button": "Eliminar un Botón Específico",
+          "delete_device": "Eliminar un Dispositivo Completo",
+          "init": "Volver al Menú Principal",
+          "finish": "Finalizar y Cerrar"
+        }
+      },
+      "delete_single_button": {
+        "title": "Eliminar Botón RF",
+        "description": "Selecciona el botón que deseas eliminar permanentemente de Home Assistant.",
+        "data": {
+          "button_name": "Botón a Eliminar"
+        }
+      },
+      "delete_device": {
+        "title": "Eliminar Dispositivo RF Completo",
+        "description": "⚠️ Al eliminar el dispositivo, se borrarán todos sus botones asociados, su sensor y su ficha en Home Assistant.",
+        "data": {
+          "device_name": "Dispositivo a Eliminar"
+        }
+      },
+      "device_delete_this_device": {
+        "title": "Eliminar Dispositivo: {device_name}",
+        "description": "⚠️ ¿Estás seguro de que deseas eliminar el dispositivo **{device_name}** y todos sus botones asociados?",
+        "data": {
+          "confirm": "Confirmar eliminación definitiva"
         }
       },
       "manage_devices": {
@@ -52,6 +84,7 @@
           "device_learn_button": "Aprender Nuevo Botón",
           "device_configure_button": "Configurar Repeticiones de Botón",
           "device_delete_button": "Eliminar Botón de este Dispositivo",
+          "device_delete_this_device": "Eliminar este Dispositivo Completo",
           "manage_devices": "Cambiar de Dispositivo",
           "finish": "Finalizar y Cerrar"
         }
