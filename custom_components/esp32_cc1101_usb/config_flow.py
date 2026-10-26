@@ -256,6 +256,28 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         """Initialize options flow."""
         self._target_device: str | None = None
 
+    def _get_device_buttons(self, dev_name: str) -> dict[str, str]:
+        """Return dict of {short_button_name: full_storage_key} for a device."""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+        buttons: dict[str, str] = {}
+        for full_key, val in saved.items():
+            if full_key.startswith("__"):
+                continue
+            curr_dev = ""
+            curr_cmd = full_key
+            if isinstance(val, dict) and val.get("device"):
+                curr_dev = val["device"].strip()
+                curr_cmd = val.get("command", full_key).strip()
+            elif " - " in full_key:
+                curr_dev, curr_cmd = full_key.split(" - ", 1)
+                curr_dev = curr_dev.strip()
+                curr_cmd = curr_cmd.strip()
+            if curr_dev.lower() == dev_name.lower():
+                buttons[curr_cmd] = full_key
+        return buttons
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -278,24 +300,46 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                                 dev_name = d
                                 break
                         self._target_device = dev_name
-                        return await self.async_step_device_learn_button()
+                        return await self.async_step_device_menu()
 
         is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
         if is_es:
             menu = {
-                "create_device": "➕ Crear Nuevo Dispositivo RF",
-                "learn_button": "🎯 Aprender Botón para Dispositivo",
-                "radio_settings": "⚙️ Parámetros de Radio CC1101",
+                "create_device": "Crear Nuevo Dispositivo RF",
+                "radio_settings": "Parámetros de Radio CC1101",
             }
         else:
             menu = {
-                "create_device": "➕ Create New RF Device",
-                "learn_button": "🎯 Learn Button for Existing Device",
-                "radio_settings": "⚙️ CC1101 Radio Parameters & Tuning",
+                "create_device": "Create New RF Device",
+                "radio_settings": "CC1101 Radio Parameters & Tuning",
             }
 
         return self.async_show_menu(
             step_id="init",
+            menu_options=menu,
+        )
+
+    async def async_step_device_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show action menu for this specific device."""
+        dev_name = self._target_device or "Device"
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+        if is_es:
+            menu = {
+                "device_learn_button": f"Aprender Nuevo Boton ({dev_name})",
+                "device_configure_button": "Configurar Repeticiones de Boton",
+                "device_delete_button": "Eliminar Boton de este Dispositivo",
+            }
+        else:
+            menu = {
+                "device_learn_button": f"Learn New Button ({dev_name})",
+                "device_configure_button": "Configure Button Repetitions",
+                "device_delete_button": "Delete Button from Device",
+            }
+
+        return self.async_show_menu(
+            step_id="device_menu",
             menu_options=menu,
         )
 
@@ -309,23 +353,149 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             btn_name = user_input.get("button_name", "").strip()
+            repeats = user_input.get("repeats", DEFAULT_REPEATS)
             if not btn_name:
                 errors["button_name"] = "button_name_required"
             else:
                 from . import async_start_learning_flow
                 await async_start_learning_flow(
-                    self.hass, entry_id, btn_name, dev_name
+                    self.hass, entry_id, btn_name, dev_name, repeats=int(repeats)
                 )
                 return self.async_create_entry(title="", data={})
 
         schema = vol.Schema(
             {
                 vol.Required("button_name"): str,
+                vol.Optional("repeats", default=DEFAULT_REPEATS): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=25,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
             }
         )
 
         return self.async_show_form(
             step_id="device_learn_button",
+            data_schema=schema,
+            description_placeholders={"device_name": dev_name},
+            errors=errors,
+        )
+
+    async def async_step_device_configure_button(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure repetitions for a learned button on this device."""
+        errors: dict[str, str] = {}
+        entry_id = self.config_entry.entry_id
+        dev_name = self._target_device or "Device"
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+        buttons = self._get_device_buttons(dev_name)
+
+        if not buttons:
+            return await self.async_step_device_learn_button()
+
+        btn_list = sorted(list(buttons.keys()))
+
+        if user_input is not None:
+            chosen_btn = user_input.get("button_name")
+            new_repeats = user_input.get("repeats", DEFAULT_REPEATS)
+            full_key = buttons.get(chosen_btn)
+            if full_key and full_key in saved:
+                val = saved[full_key]
+                if isinstance(val, dict):
+                    val["repeats"] = int(new_repeats)
+                else:
+                    saved[full_key] = {
+                        "type": "raw",
+                        "raw": val,
+                        "device": dev_name,
+                        "command": chosen_btn,
+                        "repeats": int(new_repeats),
+                    }
+                await entry_data["store"].async_save(saved)
+
+                try:
+                    from homeassistant.components import persistent_notification
+                    persistent_notification.async_create(
+                        self.hass,
+                        f"Configured **{chosen_btn}** on **{dev_name}** with **{new_repeats} repetitions**.",
+                        title=f"Button Configured: {chosen_btn}",
+                        notification_id=f"{DOMAIN}_btn_cfg_{chosen_btn.lower().replace(' ', '_')}",
+                    )
+                except Exception:
+                    pass
+
+                return self.async_create_entry(title="", data={})
+
+        first_key = buttons[btn_list[0]]
+        first_val = saved.get(first_key, {})
+        cur_repeats = first_val.get("repeats", DEFAULT_REPEATS) if isinstance(first_val, dict) else DEFAULT_REPEATS
+
+        schema = vol.Schema(
+            {
+                vol.Required("button_name", default=btn_list[0]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[SelectOptionDict(value=b, label=b) for b in btn_list],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required("repeats", default=cur_repeats): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=25,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="device_configure_button",
+            data_schema=schema,
+            description_placeholders={"device_name": dev_name},
+            errors=errors,
+        )
+
+    async def async_step_device_delete_button(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Delete an individual button from this device."""
+        errors: dict[str, str] = {}
+        entry_id = self.config_entry.entry_id
+        dev_name = self._target_device or "Device"
+        buttons = self._get_device_buttons(dev_name)
+
+        if not buttons:
+            return self.async_abort(reason="no_buttons_found")
+
+        btn_list = sorted(list(buttons.keys()))
+
+        if user_input is not None:
+            chosen_btn = user_input.get("button_name")
+            full_key = buttons.get(chosen_btn)
+            if full_key:
+                from . import async_delete_command_flow
+                await async_delete_command_flow(self.hass, entry_id, full_key)
+                return self.async_create_entry(title="", data={})
+
+        schema = vol.Schema(
+            {
+                vol.Required("button_name", default=btn_list[0]): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[SelectOptionDict(value=b, label=b) for b in btn_list],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="device_delete_button",
             data_schema=schema,
             description_placeholders={"device_name": dev_name},
             errors=errors,
@@ -362,13 +532,24 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                     devices_list.append(dev_name)
                     await entry_data["store"].async_save(saved)
 
-                persistent_notification = self.hass.components.persistent_notification
-                persistent_notification.async_create(
-                    f"Device **{dev_name}** has been created!\n\n"
-                    f"Open **{dev_name}** in Settings -> Devices and click **Configure** to learn remote buttons for it.",
-                    title=f"Device Created: {dev_name}",
-                    notification_id=f"{DOMAIN}_dev_created_{slug_dev}",
-                )
+                if entry_data.get("add_device_sensor_callback"):
+                    try:
+                        entry_data["add_device_sensor_callback"](dev_name)
+                    except Exception as err:
+                        _LOGGER.debug("Could not add device sensor: %s", err)
+
+                try:
+                    from homeassistant.components import persistent_notification
+                    persistent_notification.async_create(
+                        self.hass,
+                        f"Device **{dev_name}** has been created!\n\n"
+                        f"Open **{dev_name}** in Settings -> Devices and click **Configure** to learn remote buttons for it.",
+                        title=f"Device Created: {dev_name}",
+                        notification_id=f"{DOMAIN}_dev_created_{slug_dev}",
+                    )
+                except Exception as notif_err:
+                    _LOGGER.debug("Notification notice: %s", notif_err)
+
                 return self.async_create_entry(title="", data={})
 
         schema = vol.Schema(
@@ -381,52 +562,6 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             step_id="create_device",
             data_schema=schema,
             errors=errors,
-        )
-
-    async def async_step_learn_button(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Learn a button for an existing device."""
-        errors: dict[str, str] = {}
-        entry_id = self.config_entry.entry_id
-        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
-        saved = entry_data.get("saved_codes", {})
-
-        existing_devices = set(saved.get("__devices__", []))
-        for k, v in saved.items():
-            if k == "__devices__":
-                continue
-            if isinstance(v, dict) and v.get("device"):
-                existing_devices.add(v["device"].strip())
-            elif " - " in k:
-                existing_devices.add(k.split(" - ", 1)[0].strip())
-
-        dev_list = sorted(list(existing_devices))
-        if not dev_list:
-            return await self.async_step_create_device()
-
-        if user_input is not None:
-            chosen_dev = user_input.get("target_device")
-            btn_name = user_input.get("button_name", "").strip()
-            if not btn_name:
-                errors["button_name"] = "button_name_required"
-            else:
-                from . import async_start_learning_flow
-                await async_start_learning_flow(
-                    self.hass, entry_id, btn_name, chosen_dev
-                )
-                return self.async_create_entry(title="", data={})
-
-        schema = vol.Schema(
-            {
-                vol.Required("target_device", default=dev_list[0]): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[SelectOptionDict(value=d, label=d) for d in dev_list],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required("button_name"): str,
-            }
         )
 
         return self.async_show_form(

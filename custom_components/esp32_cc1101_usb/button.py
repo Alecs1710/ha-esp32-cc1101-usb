@@ -162,6 +162,8 @@ class Esp32SavedCommandButton(ButtonEntity):
             raise HomeAssistantError(
                 f"Command '{self._command_name}' no longer exists in storage"
             )
+        custom_repeats = code.get("repeats") if isinstance(code, dict) else None
+
         if isinstance(code, dict) and "code" in code:
             code_val = code["code"]
             if code.get("type") == "rolling_code":
@@ -182,8 +184,9 @@ class Esp32SavedCommandButton(ButtonEntity):
                 bits=code.get("bits", 24),
                 protocol=code.get("protocol", 1),
                 pulse_length=code.get("pulse_length", 350),
+                repeats=custom_repeats,
             )
         elif isinstance(code, str):
-            await self.client.async_send_raw(code)
+            await self.client.async_send_raw(code, repeats=custom_repeats)
         elif isinstance(code, dict) and "raw" in code:
-            await self.client.async_send_raw(code["raw"])
+            await self.client.async_send_raw(code["raw"], repeats=custom_repeats)

@@ -31,14 +31,44 @@ async def async_setup_entry(
     entry_data = hass.data[DOMAIN][entry.entry_id]
     client: Esp32Cc1101Client = entry_data["client"]
 
-    entities = [
+    entities: list[SensorEntity] = [
         Esp32LastCodeSensor(entry, client),
         Esp32RssiSensor(entry, client),
         Esp32ActiveFrequencySensor(entry, client),
         Esp32RadioStatusSensor(entry, client),
         Esp32LearningSensor(hass, entry, client),
     ]
+
+    saved_codes: dict[str, Any] = entry_data.get("saved_codes", {})
+    device_names: set[str] = set(saved_codes.get("__devices__", []))
+    for k, v in saved_codes.items():
+        if k.startswith("__"):
+            continue
+        if isinstance(v, dict) and v.get("device"):
+            device_names.add(v["device"].strip())
+        elif " - " in k:
+            device_names.add(k.split(" - ", 1)[0].strip())
+
+    created_device_sensors: dict[str, Esp32DeviceLastButtonSensor] = {}
+    for dev_name in sorted(list(device_names)):
+        if not dev_name:
+            continue
+        dev_sensor = Esp32DeviceLastButtonSensor(entry, dev_name, entry_data)
+        entities.append(dev_sensor)
+        created_device_sensors[dev_name.lower()] = dev_sensor
+
     async_add_entities(entities)
+
+    def add_device_sensor(new_dev: str) -> None:
+        if not new_dev:
+            return
+        dev_lower = new_dev.lower()
+        if dev_lower not in created_device_sensors:
+            dev_sensor = Esp32DeviceLastButtonSensor(entry, new_dev, entry_data)
+            created_device_sensors[dev_lower] = dev_sensor
+            async_add_entities([dev_sensor])
+
+    entry_data["add_device_sensor_callback"] = add_device_sensor
 
 
 class Esp32LastCodeSensor(SensorEntity):
@@ -297,3 +327,72 @@ class Esp32LearningSensor(SensorEntity):
             "saved_commands_count": len(saved_commands),
             "saved_commands": saved_commands,
         }
+
+
+class Esp32DeviceLastButtonSensor(SensorEntity):
+    """Sensor displaying which button of this device was last pressed over the air."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Last Button Pressed"
+    _attr_icon = "mdi:remote"
+    _attr_force_update = True
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        device_name: str,
+        entry_data: dict[str, Any],
+    ) -> None:
+        self.entry = entry
+        self._device_name = device_name
+        self._entry_data = entry_data
+        self._last_button = "None"
+        self._last_rssi: int | None = None
+        self._last_code: Any = None
+        self._reception_count = 0
+        self._last_received_time = "Never"
+
+        slug_dev = device_name.lower().replace(" ", "_")
+        self._attr_unique_id = f"esp32_cc1101_dev_last_btn_{entry.entry_id}_{slug_dev}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}_dev_{slug_dev}")},
+            name=device_name,
+            manufacturer="ESP32 CC1101 RF",
+            model="Learned RF Device",
+            via_device=(DOMAIN, entry.entry_id),
+        )
+        self._attr_native_value = "None"
+
+    async def async_added_to_hass(self) -> None:
+        """Register listener for passive over-the-air RF button presses."""
+        listeners = self._entry_data.setdefault("device_button_listeners", {})
+        listeners[self._device_name.lower()] = self.on_button_received
+
+    def on_button_received(self, cmd_name: str, rssi: int | None, code: Any) -> None:
+        """Handle signal received over the air for this device."""
+        self._last_button = cmd_name
+        self._last_rssi = rssi
+        self._last_code = code
+        self._reception_count += 1
+        self._last_received_time = datetime.now().strftime("%H:%M:%S")
+        self._attr_native_value = cmd_name
+        if getattr(self, "hass", None) is not None:
+            self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> str:
+        """Return the name of the last button pressed."""
+        return self._attr_native_value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return rich metadata about the last over-the-air button capture."""
+        return {
+            "device": self._device_name,
+            "last_button": self._last_button,
+            "rssi_dbm": self._last_rssi,
+            "code": self._last_code,
+            "reception_count": self._reception_count,
+            "last_received": self._last_received_time,
+        }
+

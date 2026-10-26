@@ -32,33 +32,49 @@
     "step": {
       "init": {
         "title": "ESP32 CC1101 RF Studio",
-        "description": "Elige una acción para gestionar dispositivos, aprender botones o ajustar la radio.",
+        "description": "Elige una acción para gestionar dispositivos o ajustar la radio.",
         "menu_options": {
-          "create_device": "➕ Crear Nuevo Dispositivo RF",
-          "learn_button": "🎯 Aprender Botón para Dispositivo",
-          "radio_settings": "⚙️ Parámetros de Radio CC1101"
+          "create_device": "Crear Nuevo Dispositivo RF",
+          "radio_settings": "Parámetros de Radio CC1101"
+        }
+      },
+      "device_menu": {
+        "title": "Configurar Dispositivo: {device_name}",
+        "description": "Selecciona una acción para este dispositivo.",
+        "menu_options": {
+          "device_learn_button": "Aprender Nuevo Botón",
+          "device_configure_button": "Configurar Repeticiones de Botón",
+          "device_delete_button": "Eliminar Botón de este Dispositivo"
         }
       },
       "create_device": {
         "title": "Crear Nuevo Dispositivo RF",
-        "description": "Introduce un nombre para el dispositivo que deseas controlar (ej: Ventilador Techo, Puerta Garaje, Persiana). Después podrás entrar a configurarlo para aprender sus botones.",
+        "description": "Introduce un nombre para el dispositivo que deseas controlar (ej: Ventilador, Toldo, Persiana). Después podrás entrar a configurarlo para aprender sus botones.",
         "data": {
           "device_name": "Nombre del Dispositivo"
         }
       },
       "device_learn_button": {
         "title": "Aprender Botón RF: {device_name}",
-        "description": "Introduce el nombre del botón a aprender (ej: Velocidad 1, Apagar, Luz). Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
+        "description": "Introduce el nombre del botón a aprender y las repeticiones deseadas. Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
         "data": {
-          "button_name": "Nombre del Botón / Comando"
+          "button_name": "Nombre del Botón / Comando",
+          "repeats": "Repeticiones de Transmisión"
         }
       },
-      "learn_button": {
-        "title": "Aprender Botón de Mando RF",
-        "description": "Selecciona el dispositivo de destino e introduce el nombre del botón a aprender. Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
+      "device_configure_button": {
+        "title": "Configurar Botón: {device_name}",
+        "description": "Selecciona un botón existente y ajusta sus repeticiones de transmisión.",
         "data": {
-          "target_device": "Dispositivo Destino",
-          "button_name": "Nombre del Botón / Comando"
+          "button_name": "Botón a Configurar",
+          "repeats": "Repeticiones de Transmisión"
+        }
+      },
+      "device_delete_button": {
+        "title": "Eliminar Botón: {device_name}",
+        "description": "Selecciona el botón que deseas eliminar de este dispositivo.",
+        "data": {
+          "button_name": "Botón a Eliminar"
         }
       },
       "radio_settings": {
@@ -78,7 +94,18 @@
     },
     "error": {
       "device_name_required": "Por favor introduce un nombre para el dispositivo.",
-      "button_name_required": "Por favor introduce un nombre para el botón a aprender."
+      "button_name_required": "Por favor introduce un nombre para el botón a aprender.",
+      "no_buttons_found": "No hay botones guardados para este dispositivo."
+    },
+    "abort": {
+      "no_buttons_found": "No hay botones para eliminar en este dispositivo."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "dev_last_button": {
+        "name": "Último Botón Pulsado"
+      }
     }
   }
 }

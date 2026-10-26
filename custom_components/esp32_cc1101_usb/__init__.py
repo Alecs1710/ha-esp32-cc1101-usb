@@ -46,7 +46,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["remote", "sensor", "select", "number", "button", "fan", "light", "update"]
+PLATFORMS = ["remote", "sensor", "select", "number", "button", "update"]
 
 SERVICE_SEND_RAW_SCHEMA = vol.Schema(
     {
@@ -286,7 +286,11 @@ def find_saved_command(
 
 
 async def async_start_learning_flow(
-    hass: HomeAssistant, entry_id: str, name: str, device_name: str | None = None
+    hass: HomeAssistant,
+    entry_id: str,
+    name: str,
+    device_name: str | None = None,
+    repeats: int | None = None,
 ) -> None:
     """Start RF learning flow for a given command name."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
@@ -302,6 +306,7 @@ async def async_start_learning_flow(
         "active": True,
         "name": name,
         "device": dev,
+        "repeats": repeats,
         "samples": [],
         "decoded_samples": [],
         "last_sample_time": 0.0,
@@ -551,6 +556,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "saved_codes": saved_codes,
         "learning": {"active": False, "name": "", "samples": [], "decoded_samples": [], "last_sample_time": 0.0},
         "add_button_callback": None,
+        "add_device_sensor_callback": None,
+        "device_button_listeners": {},
         "state_listeners": {},
     }
     hass.data[DOMAIN][entry.entry_id] = entry_data
@@ -773,6 +780,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if reg_entry.unique_id not in valid_numbers:
                 _LOGGER.info("Purging obsolete number from registry: %s (%s)", reg_entry.entity_id, reg_entry.unique_id)
                 ent_reg.async_remove(reg_entry.entity_id)
+        # Purge obsolete synthetic fan or light entities
+        elif reg_entry.domain in ("fan", "light"):
+            _LOGGER.info("Purging synthetic %s entity from registry: %s", reg_entry.domain, reg_entry.entity_id)
+            ent_reg.async_remove(reg_entry.entity_id)
 
     # Ensure all user-created devices exist in Home Assistant's Device Registry
     dev_reg = dr.async_get(hass)
@@ -884,6 +895,9 @@ async def _handle_learning_sample(
                 "command": cmd_name,
             }
 
+        if learning.get("repeats") is not None and isinstance(result_code, dict):
+            result_code["repeats"] = int(learning["repeats"])
+
         entry_data["saved_codes"][full_cmd_name] = result_code
         if dev_name:
             devices_list = entry_data["saved_codes"].setdefault("__devices__", [])
@@ -895,17 +909,11 @@ async def _handle_learning_sample(
         if entry_data.get("add_button_callback"):
             entry_data["add_button_callback"](full_cmd_name)
 
-        if entry_data.get("update_fan_commands_callback"):
+        if dev_name and entry_data.get("add_device_sensor_callback"):
             try:
-                entry_data["update_fan_commands_callback"](full_cmd_name)
+                entry_data["add_device_sensor_callback"](dev_name)
             except Exception as err:
-                _LOGGER.debug("Error updating fan commands callback: %s", err)
-
-        if entry_data.get("update_light_commands_callback"):
-            try:
-                entry_data["update_light_commands_callback"](full_cmd_name)
-            except Exception as err:
-                _LOGGER.debug("Error updating light commands callback: %s", err)
+                _LOGGER.debug("Could not add device sensor on learn: %s", err)
 
         if "update_delete_select_callback" in entry_data:
             try:
@@ -960,6 +968,7 @@ def _handle_passive_rf_receive(
     saved_codes = entry_data.get("saved_codes", {})
     payload = data.get("payload", {})
     rx_code = payload.get("code")
+    rx_raw = client.last_code
 
     matched_key: str | None = None
     matched_data: dict[str, Any] | str | None = None
@@ -981,6 +990,23 @@ def _handle_passive_rf_receive(
                         # Keep counter in sync with physical remote!
                         v["code"] = rx_code
                         hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                        break
+    elif rx_raw:
+        raw_pulses = len([p for p in rx_raw.split(",") if p.strip()])
+        if raw_pulses >= 16:
+            for k, v in saved_codes.items():
+                if k.startswith("__"):
+                    continue
+                stored_raw = ""
+                if isinstance(v, str):
+                    stored_raw = v
+                elif isinstance(v, dict) and v.get("type") == "raw":
+                    stored_raw = v.get("raw", "")
+                if stored_raw:
+                    stored_pulses = len([p for p in stored_raw.split(",") if p.strip()])
+                    if abs(raw_pulses - stored_pulses) <= 2:
+                        matched_key = k
+                        matched_data = v
                         break
 
     if not matched_key:
@@ -1009,12 +1035,22 @@ def _handle_passive_rf_receive(
         {
             "device": dev_name,
             "command": cmd_name,
-            "code": rx_code,
+            "code": rx_code or rx_raw,
             "rssi": client.last_rssi,
         },
     )
 
-    # Notify state listeners (e.g. Fan or Light entities)
+    # Notify device-specific button listeners (Last Button Pressed sensor)
+    device_button_listeners = entry_data.get("device_button_listeners", {})
+    if dev_name.lower() in device_button_listeners:
+        try:
+            device_button_listeners[dev_name.lower()](
+                cmd_name, client.last_rssi, rx_code or rx_raw
+            )
+        except Exception as err:
+            _LOGGER.debug("Device button listener error: %s", err)
+
+    # Notify any state listeners
     state_listeners = entry_data.get("state_listeners", {})
     for listener in list(state_listeners.values()):
         try:

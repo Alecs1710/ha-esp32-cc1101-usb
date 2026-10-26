@@ -32,33 +32,49 @@
     "step": {
       "init": {
         "title": "ESP32 CC1101 RF Studio",
-        "description": "Choose an action to manage devices or tune radio parameters.",
+        "description": "Choose an action to configure devices or tune radio settings.",
         "menu_options": {
-          "create_device": "➕ Create New RF Device",
-          "learn_button": "🎯 Learn Button for Existing Device",
-          "radio_settings": "⚙️ CC1101 Radio Parameters & Tuning"
+          "create_device": "Create New RF Device",
+          "radio_settings": "CC1101 Radio Parameters & Tuning"
+        }
+      },
+      "device_menu": {
+        "title": "Configure Device: {device_name}",
+        "description": "Select an action for this device.",
+        "menu_options": {
+          "device_learn_button": "Learn New Button",
+          "device_configure_button": "Configure Button Repetitions",
+          "device_delete_button": "Delete Button from Device"
         }
       },
       "create_device": {
         "title": "Create New RF Device",
-        "description": "Enter a name for the device you want to control (e.g. Ventilador Techo, Garage Door, Blinds). After creation, open the device to learn its remote buttons.",
+        "description": "Enter a name for the device you want to control (e.g. Fan, Blinds, Garage). After creation, open the device to learn its remote buttons.",
         "data": {
           "device_name": "Device Name"
         }
       },
       "device_learn_button": {
         "title": "Learn RF Button: {device_name}",
-        "description": "Enter the name of the button to learn (e.g. Speed 1, Off, Light). Once submitted, press your physical remote button 3 times.",
+        "description": "Enter the name of the button to learn and desired transmit repetitions. Once submitted, press your physical remote button 3 times.",
         "data": {
-          "button_name": "Button / Command Name"
+          "button_name": "Button / Command Name",
+          "repeats": "Transmit Repetitions"
         }
       },
-      "learn_button": {
-        "title": "Learn RF Remote Button",
-        "description": "Select the target device and enter the button name to learn. Once submitted, press your physical remote button 3 times.",
+      "device_configure_button": {
+        "title": "Configure Button: {device_name}",
+        "description": "Select an existing button and adjust its transmit repetitions.",
         "data": {
-          "target_device": "Target Device",
-          "button_name": "Button / Command Name"
+          "button_name": "Button to Configure",
+          "repeats": "Transmit Repetitions"
+        }
+      },
+      "device_delete_button": {
+        "title": "Delete Button: {device_name}",
+        "description": "Select the button to delete from this device.",
+        "data": {
+          "button_name": "Button to Delete"
         }
       },
       "radio_settings": {
@@ -78,49 +94,17 @@
     },
     "error": {
       "device_name_required": "Please enter a name for the device.",
-      "button_name_required": "Please enter a name for the button to learn."
+      "button_name_required": "Please enter a name for the button to learn.",
+      "no_buttons_found": "No buttons found for this device."
+    },
+    "abort": {
+      "no_buttons_found": "No buttons to delete for this device."
     }
   },
   "entity": {
-    "number": {
-      "squelch": {
-        "name": "Receiver Sensitivity (Squelch)"
-      },
-      "min_repeats": {
-        "name": "Minimum Repeats Filter"
-      }
-    },
-    "select": {
-      "rx_mode": {
-        "name": "RF Reception Mode"
-      },
-      "target_dev_select": {
-        "name": "Select Target Device"
-      },
-      "delete_select": {
-        "name": "Step 1: Select RF Command to Delete"
-      }
-    },
-    "button": {
-      "repeat": {
-        "name": "Repeat Last Code"
-      },
-      "learn_start": {
-        "name": "Start Learning RF Code"
-      },
-      "learn_cancel": {
-        "name": "Cancel Learning"
-      },
-      "confirm_delete": {
-        "name": "Step 2: Confirm Delete Command"
-      }
-    },
-    "text": {
-      "target_device": {
-        "name": "Target Device Name"
-      },
-      "learn_name": {
-        "name": "Command Name to Learn"
+    "sensor": {
+      "dev_last_button": {
+        "name": "Last Button Pressed"
       }
     }
   }
