@@ -63,7 +63,7 @@
       },
       "device_learn_button": {
         "title": "Learn RF Button: {device_name}",
-        "description": "Enter the name of the button to learn and desired transmit repetitions. Once submitted, press your physical remote button 3 times.",
+        "description": "Enter the button name and repeats. Once submitted, hold down the button on your physical remote for 5 continuous seconds. Home Assistant will then prompt you to press it once to verify before saving.",
         "data": {
           "button_name": "Button / Command Name",
           "repeats": "Transmit Repetitions"

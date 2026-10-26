@@ -63,7 +63,7 @@
       },
       "device_learn_button": {
         "title": "Aprender Botón RF: {device_name}",
-        "description": "Introduce el nombre del botón a aprender y las repeticiones deseadas. Al pulsar Enviar, presiona el botón de tu mando físico 3 veces.",
+        "description": "Introduce el nombre del botón y repeticiones. Al pulsar Enviar, mantén pulsado el botón en tu mando físico durante 5 segundos continuos. Tras el análisis, Home Assistant te pedirá pulsar 1 vez para verificarlo antes de guardarlo.",
         "data": {
           "button_name": "Nombre del Botón / Comando",
           "repeats": "Repeticiones de Transmisión"

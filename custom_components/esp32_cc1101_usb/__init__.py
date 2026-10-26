@@ -178,24 +178,24 @@ def _compare_raw_pulses(raw1: str, raw2: str) -> float:
 
 def _analyze_learning_consensus(
     samples: list[str], decoded_samples: list[dict[str, Any]]
-) -> tuple[dict[str, Any] | str, str]:
-    """Analyzes multiple repetitions across button presses to find the true, confirmed RF code."""
+) -> tuple[dict[str, Any] | str | None, str]:
+    """Analyzes continuous 5-second button press to extract the true, confirmed RF code."""
     rep_raw = samples[0] if samples else ""
 
-    # 1. Analyze decoded samples across all button presses
+    # 1. Analyze decoded samples across continuous button press
     if decoded_samples:
         bit_counts = Counter(s.get("bits", 0) for s in decoded_samples if s.get("bits"))
         if bit_counts:
             dominant_bits = None
             for b, count in sorted(bit_counts.items(), key=lambda x: x[0], reverse=True):
-                if count >= 2 or count == len(decoded_samples):
+                if count >= 3 or count == len(decoded_samples):
                     dominant_bits = b
                     break
-            if not dominant_bits:
+            if not dominant_bits and bit_counts:
                 dominant_bits = bit_counts.most_common(1)[0][0]
 
             valid_samples = [s for s in decoded_samples if s.get("bits") == dominant_bits]
-            if valid_samples:
+            if len(valid_samples) >= 3:
                 codes = [s["code"] for s in valid_samples]
                 proto = valid_samples[0].get("protocol", 1)
                 pulse_lengths = [s.get("pulse_length", 350) for s in valid_samples if s.get("pulse_length")]
@@ -214,8 +214,8 @@ def _analyze_learning_consensus(
                         latest_code = unique_ordered[-1]
                         base_id = latest_code >> 8
                         desc = (
-                            f"Learned as **Decoded Rolling Code** "
-                            f"(Base: `0x{base_id:06X}`, Step: `+{common_delta}`, {dominant_bits} bits, Protocol {proto})"
+                            f"Decoded Rolling Code "
+                            f"(Base: 0x{base_id:06X}, Step: +{common_delta}, {dominant_bits}b, Proto {proto})"
                         )
                         return {
                             "type": "rolling_code",
@@ -228,21 +228,22 @@ def _analyze_learning_consensus(
                             "raw": rep_raw,
                         }, desc
 
-                most_common_code, _ = Counter(codes).most_common(1)[0]
-                desc = (
-                    f"Learned as **Decoded Protocol** "
-                    f"(Code: `{most_common_code}`, {dominant_bits} bits, Protocol {proto})"
-                )
-                return {
-                    "type": "code",
-                    "code": most_common_code,
-                    "bits": dominant_bits,
-                    "protocol": proto,
-                    "pulse_length": pulse_len,
-                    "raw": rep_raw,
-                }, desc
+                most_common_code, code_count = Counter(codes).most_common(1)[0]
+                if code_count >= 3:
+                    desc = (
+                        f"Decoded Protocol "
+                        f"(Code: {most_common_code}, {dominant_bits}b, Proto {proto}, {code_count} frames)"
+                    )
+                    return {
+                        "type": "code",
+                        "code": most_common_code,
+                        "bits": dominant_bits,
+                        "protocol": proto,
+                        "pulse_length": pulse_len,
+                        "raw": rep_raw,
+                    }, desc
 
-    # 2. Raw pulse analysis across repetitions if not decoded
+    # 2. Raw pulse analysis across continuous button press
     parsed: list[list[int]] = []
     for s in samples:
         try:
@@ -253,11 +254,12 @@ def _analyze_learning_consensus(
             continue
 
     if not parsed:
-        raw_final = samples[-1] if samples else ""
-        return raw_final, f"Learned as **Raw Pulses** ({len(raw_final.split(','))} pulses)"
+        return None, "No pulses detected"
 
     target_len = Counter(len(p) for p in parsed).most_common(1)[0][0]
     matching = [p for p in parsed if abs(len(p) - target_len) <= 2]
+    if len(matching) < 3:
+        return None, f"Insufficient clean frames ({len(matching)} frames)"
 
     min_len = min(len(p) for p in matching)
     cleaned_pulses = []
@@ -266,7 +268,7 @@ def _analyze_learning_consensus(
         cleaned_pulses.append(str(round(statistics.median(vals))))
 
     raw_str = ",".join(cleaned_pulses)
-    desc = f"Learned as **Cleaned Multi-Sample Raw RF** ({len(cleaned_pulses)} pulses across {len(matching)} repetitions)"
+    desc = f"Cleaned Raw RF ({len(cleaned_pulses)} pulses across {len(matching)} continuous frames)"
     return raw_str, desc
 
 
@@ -351,7 +353,7 @@ async def async_start_learning_flow(
     device_name: str | None = None,
     repeats: int | None = None,
 ) -> None:
-    """Start RF learning flow for a given command name."""
+    """Start continuous 5-second RF learning flow for a given command name."""
     entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
     if not entry_data:
         raise HomeAssistantError(f"Integration entry '{entry_id}' not found")
@@ -359,10 +361,22 @@ async def async_start_learning_flow(
     if not name:
         raise HomeAssistantError("Command name cannot be empty")
 
-    dev = (device_name or "Ceiling Fan").strip()
+    dev = (device_name or "Dispositivo").strip()
     prev_mode = entry_data["client"].rx_mode
+
+    # Cancel any previous learning timers
+    old_learning = entry_data.get("learning")
+    if old_learning:
+        for t_key in ("timer_task", "verify_task"):
+            old_task = old_learning.get(t_key)
+            if old_task and not old_task.done():
+                old_task.cancel()
+
+    timer_task = hass.async_create_task(_async_learning_recording_timer(hass, entry_id, 5.0))
+
     entry_data["learning"] = {
         "active": True,
+        "phase": "recording",
         "name": name,
         "device": dev,
         "repeats": repeats,
@@ -370,13 +384,17 @@ async def async_start_learning_flow(
         "decoded_samples": [],
         "last_sample_time": 0.0,
         "prev_mode": prev_mode,
+        "candidate_code": None,
+        "candidate_desc": "",
+        "timer_task": timer_task,
+        "verify_task": None,
     }
     await entry_data["client"].async_set_config(rx_mode="Learn Mode")
+
+    display_label = f"{dev} - {name}" if dev else name
     _LOGGER.info(
-        "Starting RF learning mode for '%s' - '%s' (press remote button %d times)",
-        dev,
-        name,
-        LEARN_STEPS,
+        "Starting continuous RF learning for '%s' (Hold button for 5 seconds)",
+        display_label,
     )
 
     if "update_learning_sensor_callback" in entry_data:
@@ -385,13 +403,12 @@ async def async_start_learning_flow(
         except Exception:
             pass
 
-    display_label = f"{dev} - {name}" if dev else name
     persistent_notification.async_create(
         hass,
-        f"Ready to learn **{display_label}**.\n\n"
-        f"Please press the button on your physical remote **{LEARN_STEPS} times** "
-        f"(pause 1 second between presses).",
-        title=f"Learning RF Code: {display_label} (0/{LEARN_STEPS})",
+        f"⏳ **Paso 1 de 2: Grabando señal de `{display_label}`**\n\n"
+        f"👉 **Mantén pulsado el botón en tu mando físico durante 5 segundos de forma CONTINUA.**\n\n"
+        f"*(Mantén el mando a 10–30 cm del transceptor CC1101 para una captura limpia sin interferencias).* ",
+        title=f"Grabando Botón: {display_label} (Paso 1/2)",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
     )
 
@@ -406,7 +423,12 @@ async def async_cancel_learning_flow(
     learning = entry_data.get("learning")
     if learning and learning.get("active"):
         learning["active"] = False
-        prev_mode = learning.get("prev_mode", RX_MODE_DECODED)
+        learning["phase"] = "idle"
+        for t_key in ("timer_task", "verify_task"):
+            t = learning.get(t_key)
+            if t and not t.done():
+                t.cancel()
+        prev_mode = learning.get("prev_mode", RX_MODE_ALL)
         await entry_data["client"].async_set_config(rx_mode=prev_mode)
         persistent_notification.async_dismiss(
             hass, notification_id=f"{DOMAIN}_learning_{entry_id}"
@@ -872,10 +894,258 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+async def _async_learning_recording_timer(
+    hass: HomeAssistant, entry_id: str, duration: float = 5.0
+) -> None:
+    """Timer that waits 5.0 seconds for continuous button press and evaluates consensus."""
+    await asyncio.sleep(duration)
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        return
+    learning = entry_data.get("learning")
+    if not learning or not learning.get("active") or learning.get("phase") != "recording":
+        return
+
+    samples = learning.get("samples", [])
+    decoded_samples = learning.get("decoded_samples", [])
+    cmd_name = learning.get("name", "")
+    dev_name = learning.get("device", "").strip()
+    display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
+
+    result_code, desc = _analyze_learning_consensus(samples, decoded_samples)
+
+    if not result_code:
+        # Consensus failed (e.g. ambient noise or fewer than 3 matching frames)
+        learning["active"] = False
+        learning["phase"] = "failed"
+        prev_mode = learning.get("prev_mode", RX_MODE_ALL)
+        client: Esp32Cc1101Client = entry_data["client"]
+        hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
+
+        if "update_learning_sensor_callback" in entry_data:
+            try:
+                entry_data["update_learning_sensor_callback"]()
+            except Exception:
+                pass
+
+        _LOGGER.warning(
+            "Continuous RF learning failed for '%s': %s (samples: %d)",
+            display_label,
+            desc,
+            len(samples),
+        )
+        persistent_notification.async_create(
+            hass,
+            f"⚠️ **No se pudo aprender el botón `{display_label}`**\n\n"
+            f"**Motivo:** {desc}.\n\n"
+            f"Se recibieron {len(samples)} paquetes durante los 5 segundos, pero no hubo suficiente consistencia de señal o se detectaron interferencias.\n\n"
+            f"👉 **Consejos:**\n"
+            f"- Mantén el mando a 10–30 cm del transceptor CC1101.\n"
+            f"- Mantén el botón pulsado firmemente y sin soltar durante los 5 segundos completos.\n"
+            f"- Vuelve a intentar el aprendizaje desde el menú.",
+            title=f"Error al Aprender: {display_label}",
+            notification_id=f"{DOMAIN}_learning_{entry_id}",
+        )
+        return
+
+    # Phase 1 Success! Move to verification phase
+    learning["phase"] = "verifying"
+    learning["candidate_code"] = result_code
+    learning["candidate_desc"] = desc
+    learning["last_sample_time"] = time.time()  # reset debounce for single click
+
+    # Listen passively in RX_MODE_ALL to verify real detection
+    client = entry_data["client"]
+    hass.async_create_task(client.async_set_config(rx_mode=RX_MODE_ALL))
+
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
+        except Exception:
+            pass
+
+    _LOGGER.info(
+        "Recording phase complete for '%s' (%s). Awaiting single-click verification...",
+        display_label,
+        desc,
+    )
+
+    persistent_notification.async_create(
+        hass,
+        f"✅ **Paso 2 de 2: Verificación de `{display_label}`**\n\n"
+        f"Señal analizada con éxito: `{desc}`.\n\n"
+        f"👉 **Ahora, pulsa el botón en tu mando físico UNA SOLA VEZ para confirmar que Home Assistant lo detecta.**\n\n"
+        f"*(Tienes 15 segundos para pulsar)*",
+        title=f"Paso 2/2: Pulsa para Verificar ({display_label})",
+        notification_id=f"{DOMAIN}_learning_{entry_id}",
+    )
+
+    # Launch 15-second verification timeout
+    verify_task = hass.async_create_task(
+        _async_learning_verification_timeout(hass, entry_id, 15.0)
+    )
+    learning["verify_task"] = verify_task
+
+
+async def _async_learning_verification_timeout(
+    hass: HomeAssistant, entry_id: str, timeout: float = 15.0
+) -> None:
+    """Handles verification phase timeout if the user does not press the button within 15 seconds."""
+    await asyncio.sleep(timeout)
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        return
+    learning = entry_data.get("learning")
+    if not learning or not learning.get("active") or learning.get("phase") != "verifying":
+        return
+
+    cmd_name = learning.get("name", "")
+    dev_name = learning.get("device", "").strip()
+    display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
+
+    learning["active"] = False
+    learning["phase"] = "timeout"
+    prev_mode = learning.get("prev_mode", RX_MODE_ALL)
+    client: Esp32Cc1101Client = entry_data["client"]
+    hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
+
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
+        except Exception:
+            pass
+
+    _LOGGER.warning(
+        "Verification timed out after 15s for '%s'. Candidate code was discarded.",
+        display_label,
+    )
+    persistent_notification.async_create(
+        hass,
+        f"⏱️ **Tiempo agotado en la verificación de `{display_label}`**\n\n"
+        f"No se detectó la pulsación de confirmación dentro del plazo de 15 segundos.\n\n"
+        f"Para garantizar que no se guarden señales corruptas ni interferencias de otros dispositivos, **el código capturado ha sido descartado**.\n\n"
+        f"Puedes volver a iniciar el proceso cuando estés listo.",
+        title=f"Verificación Cancelada: {display_label}",
+        notification_id=f"{DOMAIN}_learning_{entry_id}",
+    )
+
+
+async def _async_learning_verification_success(
+    hass: HomeAssistant,
+    entry_id: str,
+    matched_signal: Any,
+) -> None:
+    """Save the confirmed code, add the button entity, notify sensors and user."""
+    entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not entry_data:
+        return
+    learning = entry_data.get("learning")
+    if not learning or not learning.get("active"):
+        return
+
+    # Cancel verify task so it doesn't fire timeout
+    verify_task = learning.get("verify_task")
+    if verify_task and not verify_task.done():
+        verify_task.cancel()
+
+    result_code = learning.get("candidate_code")
+    desc = learning.get("candidate_desc", "Confirmed")
+    cmd_name = learning["name"]
+    dev_name = learning.get("device", "").strip()
+    display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
+
+    learning["active"] = False
+    learning["phase"] = "done"
+    prev_mode = learning.get("prev_mode", RX_MODE_ALL)
+    client: Esp32Cc1101Client = entry_data["client"]
+    hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
+
+    full_cmd_name = display_label
+    if isinstance(result_code, dict):
+        result_code["device"] = dev_name
+        result_code["command"] = cmd_name
+    else:
+        result_code = {
+            "type": "raw",
+            "raw": result_code,
+            "device": dev_name,
+            "command": cmd_name,
+        }
+
+    if learning.get("repeats") is not None and isinstance(result_code, dict):
+        result_code["repeats"] = int(learning["repeats"])
+
+    entry_data["saved_codes"][full_cmd_name] = result_code
+    if dev_name:
+        devices_list = entry_data["saved_codes"].setdefault("__devices__", [])
+        if dev_name not in devices_list:
+            devices_list.append(dev_name)
+    await entry_data["store"].async_save(entry_data["saved_codes"])
+    _LOGGER.info(
+        "Successfully verified and saved RF command '%s' (%s)",
+        full_cmd_name,
+        desc,
+    )
+
+    # Add the button entity
+    if entry_data.get("add_button_callback"):
+        entry_data["add_button_callback"](full_cmd_name)
+
+    # Ensure device sensor exists and update it immediately with this verified button press
+    if dev_name:
+        if entry_data.get("add_device_sensor_callback"):
+            try:
+                entry_data["add_device_sensor_callback"](dev_name)
+            except Exception as err:
+                _LOGGER.debug("Could not add device sensor on learn: %s", err)
+
+        device_button_listeners = entry_data.get("device_button_listeners", {})
+        listener = device_button_listeners.get(dev_name.lower())
+        if listener:
+            try:
+                listener(cmd_name, client.last_rssi, matched_signal)
+            except Exception as err:
+                _LOGGER.debug("Error notifying device button listener on learn: %s", err)
+
+    if "update_delete_select_callback" in entry_data:
+        try:
+            entry_data["update_delete_select_callback"]()
+        except Exception:
+            pass
+
+    if "update_target_device_callback" in entry_data:
+        try:
+            entry_data["update_target_device_callback"]()
+        except Exception:
+            pass
+
+    if "update_target_device_select_callback" in entry_data:
+        try:
+            entry_data["update_target_device_select_callback"]()
+        except Exception:
+            pass
+
+    if "update_learning_sensor_callback" in entry_data:
+        try:
+            entry_data["update_learning_sensor_callback"]()
+        except Exception:
+            pass
+
+    persistent_notification.async_create(
+        hass,
+        f"🎉 **¡Botón `{display_label}` aprendido y verificado con éxito!**\n\n"
+        f"**Detalles:** {desc}\n\n"
+        f"Home Assistant ha detectado la pulsación de confirmación correctamente.\n\n"
+        f"Se ha añadido la entidad botón **{cmd_name}** a tu dispositivo **{dev_name or 'Mandos RF'}** y el sensor de último botón pulsado ha sido actualizado.",
+        title=f"¡Botón Verificado!: {display_label}",
+        notification_id=f"{DOMAIN}_learning_{entry_id}",
+    )
+
+
 async def _handle_learning_sample(
     hass: HomeAssistant, entry_id: str, raw_code: str, payload: dict[str, Any] | None = None
 ) -> None:
-    """Handle individual capture during multi-step learning mode."""
+    """Handle individual capture during continuous hold (Phase 1) or verification press (Phase 2)."""
     entry_data = hass.data[DOMAIN].get(entry_id)
     if not entry_data:
         return
@@ -884,113 +1154,44 @@ async def _handle_learning_sample(
     if not learning or not learning.get("active"):
         return
 
+    phase = learning.get("phase", "recording")
     now = time.time()
     last_sample_time = learning.get("last_sample_time", 0.0)
-    # Require at least 0.7s between learning presses so 1 physical click only counts once
-    if (now - last_sample_time) < 0.7:
-        return
 
-    # Filter out noisy single-glitch pulses (< 16 pulses)
-    pulse_parts = [p.strip() for p in raw_code.split(",") if p.strip()]
-    if len(pulse_parts) < 16:
-        return
+    if phase == "recording":
+        # During continuous 5s hold, bursts arrive every ~40-100ms.
+        # Debounce with 25ms to avoid exact duplicate reads in 1ms.
+        if (now - last_sample_time) < 0.025:
+            return
 
-    learning["last_sample_time"] = now
-    learning["samples"].append(raw_code)
+        pulse_parts = [p.strip() for p in raw_code.split(",") if p.strip()] if raw_code else []
+        # Filter out noisy single-glitch pulses (< 16 pulses) if raw
+        if raw_code and len(pulse_parts) < 16:
+            return
 
-    if payload and "code" in payload and "bits" in payload:
-        learning.setdefault("decoded_samples", []).append({
-            "code": payload["code"],
-            "bits": payload["bits"],
-            "protocol": payload.get("protocol", 1),
-            "pulse_length": payload.get("pulse_length", 350),
-        })
+        learning["last_sample_time"] = now
+        if raw_code:
+            learning["samples"].append(raw_code)
 
-    count = len(learning["samples"])
-    cmd_name = learning["name"]
-    dev_name = learning.get("device", "").strip()
-    display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
+        if payload and "code" in payload and "bits" in payload:
+            learning.setdefault("decoded_samples", []).append({
+                "code": payload["code"],
+                "bits": payload["bits"],
+                "protocol": payload.get("protocol", 1),
+                "pulse_length": payload.get("pulse_length", 350),
+            })
 
-    _LOGGER.info(
-        "Captured learning repetition %d/%d for '%s' (%d pulses)",
-        count,
-        LEARN_STEPS,
-        display_label,
-        len(pulse_parts),
-    )
+        count = len(learning["samples"])
+        cmd_name = learning["name"]
+        dev_name = learning.get("device", "").strip()
+        display_label = f"{dev_name} - {cmd_name}" if dev_name else cmd_name
 
-    if "update_learning_sensor_callback" in entry_data:
-        try:
-            entry_data["update_learning_sensor_callback"]()
-        except Exception:
-            pass
-
-    if count < LEARN_STEPS:
-        persistent_notification.async_create(
-            hass,
-            f"Captured repetition **{count} of {LEARN_STEPS}** for `{display_label}`.\n\n"
-            f"Please press the remote button again ({LEARN_STEPS - count} remaining).",
-            title=f"Learning RF Code: {display_label} ({count}/{LEARN_STEPS})",
-            notification_id=f"{DOMAIN}_learning_{entry_id}",
+        _LOGGER.debug(
+            "Captured continuous learning burst #%d for '%s' (%d pulses)",
+            count,
+            display_label,
+            len(pulse_parts),
         )
-    else:
-        result_code, desc = _analyze_learning_consensus(
-            learning["samples"], learning.get("decoded_samples", [])
-        )
-        learning["active"] = False
-        prev_mode = learning.get("prev_mode", RX_MODE_ALL)
-        client: Esp32Cc1101Client = entry_data["client"]
-        hass.async_create_task(client.async_set_config(rx_mode=prev_mode))
-
-        full_cmd_name = display_label
-        if isinstance(result_code, dict):
-            result_code["device"] = dev_name
-            result_code["command"] = cmd_name
-        else:
-            result_code = {
-                "type": "raw",
-                "raw": result_code,
-                "device": dev_name,
-                "command": cmd_name,
-            }
-
-        if learning.get("repeats") is not None and isinstance(result_code, dict):
-            result_code["repeats"] = int(learning["repeats"])
-
-        entry_data["saved_codes"][full_cmd_name] = result_code
-        if dev_name:
-            devices_list = entry_data["saved_codes"].setdefault("__devices__", [])
-            if dev_name not in devices_list:
-                devices_list.append(dev_name)
-        await entry_data["store"].async_save(entry_data["saved_codes"])
-        _LOGGER.info("Saved learned RF command '%s' after %d repetitions (%s)", full_cmd_name, LEARN_STEPS, desc)
-
-        if entry_data.get("add_button_callback"):
-            entry_data["add_button_callback"](full_cmd_name)
-
-        if dev_name and entry_data.get("add_device_sensor_callback"):
-            try:
-                entry_data["add_device_sensor_callback"](dev_name)
-            except Exception as err:
-                _LOGGER.debug("Could not add device sensor on learn: %s", err)
-
-        if "update_delete_select_callback" in entry_data:
-            try:
-                entry_data["update_delete_select_callback"]()
-            except Exception:
-                pass
-
-        if "update_target_device_callback" in entry_data:
-            try:
-                entry_data["update_target_device_callback"]()
-            except Exception:
-                pass
-
-        if "update_target_device_select_callback" in entry_data:
-            try:
-                entry_data["update_target_device_select_callback"]()
-            except Exception:
-                pass
 
         if "update_learning_sensor_callback" in entry_data:
             try:
@@ -998,22 +1199,57 @@ async def _handle_learning_sample(
             except Exception:
                 pass
 
-        # Reset command name input to empty to force user to specify next name
-        entry_data["learn_name_input"] = ""
-        if "update_learn_name_callback" in entry_data:
-            try:
-                entry_data["update_learn_name_callback"]("")
-            except Exception:
-                pass
+    elif phase == "verifying":
+        # Phase 2: Single test click to verify!
+        # Debounce to ensure remote button release before testing
+        if (now - last_sample_time) < 0.4:
+            return
 
-        persistent_notification.async_create(
-            hass,
-            f"Successfully learned and confirmed **{display_label}** after {LEARN_STEPS} repetitions!\n\n"
-            f"{desc}\n\n"
-            f"A button entity for **{cmd_name}** has been added to your dashboard under device **{dev_name or 'Learned Remotes'}**.",
-            title=f"RF Code Learned: {display_label}",
-            notification_id=f"{DOMAIN}_learning_{entry_id}",
-        )
+        candidate = learning.get("candidate_code")
+        if not candidate:
+            return
+
+        rx_code = payload.get("code") if payload else None
+        rx_raw = raw_code or (payload.get("raw") if payload else "")
+
+        matched = False
+        matched_sig = rx_code or rx_raw
+
+        # 1. Match by decoded code
+        if isinstance(candidate, dict):
+            cand_type = candidate.get("type")
+            cand_code = candidate.get("code")
+            if cand_code is not None and rx_code is not None:
+                if _codes_match(cand_code, rx_code):
+                    matched = True
+                elif cand_type == "rolling_code":
+                    base_id = candidate.get("base_id")
+                    try:
+                        rx_int = int(rx_code)
+                        if base_id and (rx_int >> 8) == int(base_id):
+                            matched = True
+                    except (ValueError, TypeError):
+                        pass
+
+            # 2. Match by raw pulse correlation if code didn't match or not decoded
+            if not matched and rx_raw:
+                cand_raw = candidate.get("raw", "")
+                if cand_raw:
+                    score = _compare_raw_pulses(rx_raw, cand_raw)
+                    if score >= 0.80:
+                        matched = True
+        elif isinstance(candidate, str) and rx_raw:
+            score = _compare_raw_pulses(rx_raw, candidate)
+            if score >= 0.80:
+                matched = True
+
+        if matched:
+            _LOGGER.info(
+                "Verification successful for '%s'! Signal matched: %s",
+                learning.get("name"),
+                matched_sig,
+            )
+            await _async_learning_verification_success(hass, entry_id, matched_sig)
 
 
 def _handle_passive_rf_receive(

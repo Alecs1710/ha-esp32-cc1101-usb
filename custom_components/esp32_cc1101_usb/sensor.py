@@ -301,16 +301,30 @@ class Esp32LearningSensor(SensorEntity):
         learning = entry_data.get("learning", {})
         if learning.get("status"):
             return str(learning["status"])
+
+        name = learning.get("name", "")
+        dev = learning.get("device", "")
+        label = f"{dev} - {name}" if dev else name
+        phase = learning.get("phase", "idle")
+
         if learning.get("active"):
             count = len(learning.get("samples", []))
-            name = learning.get("name", "")
-            dev = learning.get("device", "")
-            label = f"{dev} - {name}" if dev else name
-            return f"Learning '{label}' ({count}/{LEARN_STEPS} presses)"
+            if phase == "recording":
+                return f"Grabando '{label}' (Mantén 5s pulsado - {count} ráfagas)"
+            if phase == "verifying":
+                return f"Verificando '{label}' (Pulsa 1 vez para confirmar)"
+            return f"Aprendiendo '{label}'"
+
+        if phase == "done":
+            return f"Verificado y guardado '{label}'"
+        if phase == "failed":
+            return f"Fallo al capturar '{label}'"
+        if phase == "timeout":
+            return f"Tiempo agotado en verificación '{label}'"
 
         saved = entry_data.get("saved_codes", {})
         saved_commands = [k for k in saved if not k.startswith("__")]
-        return f"Idle ({len(saved_commands)} saved)"
+        return f"Inactivo ({len(saved_commands)} guardados)"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -321,9 +335,11 @@ class Esp32LearningSensor(SensorEntity):
         saved_commands = [k for k in saved if not k.startswith("__")]
         return {
             "learning_active": learning.get("active", False),
+            "learning_phase": learning.get("phase", "idle"),
             "target_command": learning.get("name", ""),
-            "presses_captured": len(learning.get("samples", [])),
-            "presses_required": LEARN_STEPS,
+            "target_device": learning.get("device", ""),
+            "bursts_captured": len(learning.get("samples", [])),
+            "candidate_desc": learning.get("candidate_desc", ""),
             "saved_commands_count": len(saved_commands),
             "saved_commands": saved_commands,
         }
