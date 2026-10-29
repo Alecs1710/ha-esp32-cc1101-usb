@@ -269,6 +269,8 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         self._record_error_desc: str = ""
         self._record_sample_count: int = 0
         self._menu_message: str | None = None
+        self._inspect_button_name: str | None = None
+        self._inspect_message: str | None = None
 
     def _get_all_devices(self) -> list[str]:
         """Return sorted list of all existing device names."""
@@ -392,8 +394,10 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         if is_es:
             menu = {
                 "device_learn_button": f"Aprender Nuevo Boton ({dev_name})",
+                "device_save_last_code": "Guardar Ultimo Codigo ('Last Code') como Boton",
             }
             if buttons:
+                menu["device_inspect_buttons"] = "Inspeccionar / Probar Botones Guardados"
                 menu["device_configure_button"] = "Configurar Repeticiones de Boton"
                 menu["device_delete_button"] = "Eliminar Boton de este Dispositivo"
             menu["device_delete_this_device"] = f"Eliminar este Dispositivo Completo ({dev_name})"
@@ -402,8 +406,10 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         else:
             menu = {
                 "device_learn_button": f"Learn New Button ({dev_name})",
+                "device_save_last_code": "Save Last Captured Code ('Last Code') as Button",
             }
             if buttons:
+                menu["device_inspect_buttons"] = "Inspect / Test Saved Buttons"
                 menu["device_configure_button"] = "Configure Button Repetitions"
                 menu["device_delete_button"] = "Delete Button from Device"
             menu["device_delete_this_device"] = f"Delete this Device ({dev_name})"
@@ -811,11 +817,13 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
         client: Esp32Cc1101Client | None = entry_data.get("client")
         is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
 
+        has_raw = False
         if client and self._candidate_code:
             code_obj = self._candidate_code
             repeats = int(self._learn_repeats)
+            has_raw = isinstance(code_obj, dict) and bool(code_obj.get("raw"))
             try:
-                if isinstance(code_obj, dict) and "code" in code_obj:
+                if isinstance(code_obj, dict) and "code" in code_obj and code_obj["code"] is not None:
                     await client.async_send_code(
                         code=code_obj["code"],
                         bits=code_obj.get("bits", 24),
@@ -832,13 +840,65 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
 
         menu: dict[str, str] = {}
         if is_es:
-            menu["device_test_send"] = "Enviar Senal Otra Vez"
+            menu["device_test_send"] = "Enviar Senal Otra Vez (Codigo)"
+            if has_raw:
+                menu["device_test_send_raw"] = "Probar Envio con Pulsos Raw"
             menu["device_learn_verify"] = "Probar Deteccion del Mando Fisico"
             menu["device_learn_button"] = f"Aprender otro boton para {dev_name}"
             menu["device_menu"] = f"Volver al menu de {dev_name}"
             menu["finish"] = "Finalizar y Cerrar"
         else:
-            menu["device_test_send"] = "Send Signal Again"
+            menu["device_test_send"] = "Send Signal Again (Code)"
+            if has_raw:
+                menu["device_test_send_raw"] = "Test Transmit using Raw Pulses"
+            menu["device_learn_verify"] = "Test Physical Remote Detection"
+            menu["device_learn_button"] = f"Learn another button for {dev_name}"
+            menu["device_menu"] = f"Return to {dev_name} menu"
+            menu["finish"] = "Finish and Close"
+
+        return self.async_show_menu(
+            step_id="device_test_send",
+            menu_options=menu,
+            description_placeholders={
+                "button_name": btn_name,
+                "device_name": dev_name,
+            },
+        )
+
+    async def async_step_device_test_send_raw(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Test transmit raw pulses directly for this learned button."""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+        dev_name = self._target_device or "Device"
+        btn_name = self._learn_button_name or "Boton"
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        raw_str = ""
+        if isinstance(self._candidate_code, dict):
+            raw_str = self._candidate_code.get("raw") or ""
+        elif isinstance(self._candidate_code, str):
+            raw_str = self._candidate_code
+
+        if client and raw_str:
+            try:
+                await client.async_send_raw(raw_str, repeats=int(self._learn_repeats))
+            except Exception as err:
+                _LOGGER.error("Failed to test send raw RF pulses: %s", err)
+
+        menu: dict[str, str] = {}
+        if is_es:
+            menu["device_test_send_raw"] = "Enviar Pulsos Raw Otra Vez"
+            menu["device_test_send"] = "Probar Envio con Codigo Estandar"
+            menu["device_learn_verify"] = "Probar Deteccion del Mando Fisico"
+            menu["device_learn_button"] = f"Aprender otro boton para {dev_name}"
+            menu["device_menu"] = f"Volver al menu de {dev_name}"
+            menu["finish"] = "Finalizar y Cerrar"
+        else:
+            menu["device_test_send_raw"] = "Send Raw Pulses Again"
+            menu["device_test_send"] = "Test Send Standard Code"
             menu["device_learn_verify"] = "Test Physical Remote Detection"
             menu["device_learn_button"] = f"Learn another button for {dev_name}"
             menu["device_menu"] = f"Return to {dev_name} menu"
@@ -884,6 +944,369 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 "device_name": dev_name,
             },
         )
+
+    async def async_step_device_save_last_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Directly save the currently captured 'Last Code' as a button for this device."""
+        entry_id = self.config_entry.entry_id
+        dev_name = self._target_device or "Device"
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        last_raw = (client.last_code or "").strip() if client else ""
+        last_dec = client.last_decoded_code if client else None
+
+        if not last_raw and last_dec is None:
+            self._menu_message = (
+                "No se ha capturado ningún código todavía en 'Last Code'. "
+                "Pulsa un botón en tu mando físico primero para que el receptor lo capte."
+                if is_es
+                else "No RF signal has been captured yet in 'Last Code'. "
+                "Press a button on your physical remote first."
+            )
+            return await self.async_step_device_menu()
+
+        details = []
+        if last_dec is not None:
+            hex_str = f" (0x{int(last_dec):X})" if isinstance(last_dec, (int, str)) and str(last_dec).isdigit() else ""
+            details.append(f"Codigo Decodificado: {last_dec}{hex_str}")
+            details.append(f"Bits: {client.last_bit_length} | Protocolo: {client.last_protocol} | Pulso: {client.last_pulse_length} us")
+        if last_raw:
+            pulses_count = len([p for p in last_raw.split(",") if p.strip()])
+            details.append(f"Pulsos Raw: {pulses_count} pulsos")
+        if client and client.last_rssi is not None:
+            details.append(f"Potencia (RSSI): {client.last_rssi} dBm")
+
+        last_code_desc = "\n".join(details)
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            btn_name = user_input.get("button_name", "").strip()
+            repeats = int(user_input.get("repeats", DEFAULT_REPEATS))
+            if not btn_name:
+                errors["button_name"] = "name_required"
+            else:
+                full_cmd_name = f"{dev_name} - {btn_name}" if dev_name else btn_name
+                save_code = {
+                    "type": "code" if last_dec is not None else "raw",
+                    "code": last_dec,
+                    "bits": client.last_bit_length or 24 if client else 24,
+                    "protocol": client.last_protocol or 1 if client else 1,
+                    "pulse_length": client.last_pulse_length or 350 if client else 350,
+                    "raw": last_raw,
+                    "device": dev_name,
+                    "command": btn_name,
+                    "repeats": repeats,
+                    "send_mode": "code" if last_dec is not None else "raw",
+                }
+
+                saved = entry_data["saved_codes"]
+                saved[full_cmd_name] = save_code
+                devices_list = saved.setdefault("__devices__", [])
+                if dev_name not in devices_list:
+                    devices_list.append(dev_name)
+
+                await entry_data["store"].async_save(saved)
+
+                if entry_data.get("add_button_callback"):
+                    entry_data["add_button_callback"](full_cmd_name)
+
+                if dev_name:
+                    if entry_data.get("add_device_sensor_callback"):
+                        try:
+                            entry_data["add_device_sensor_callback"](dev_name)
+                        except Exception:
+                            pass
+                    device_button_listeners = entry_data.get("device_button_listeners", {})
+                    listener = device_button_listeners.get(dev_name.lower())
+                    if listener:
+                        try:
+                            listener(btn_name, client.last_rssi, last_dec or last_raw)
+                        except Exception:
+                            pass
+
+                self._learn_button_name = btn_name
+                self._learn_repeats = repeats
+                self._candidate_code = save_code
+                self._candidate_desc = f"Directo de Last Code ({'Codigo' if last_dec is not None else 'Pulsos Raw'})"
+                return await self.async_step_device_learn_success()
+
+        schema = vol.Schema(
+            {
+                vol.Required("button_name"): str,
+                vol.Optional("repeats", default=DEFAULT_REPEATS): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=20,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="device_save_last_code",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={
+                "device_name": dev_name,
+                "last_code_desc": last_code_desc,
+            },
+        )
+
+    async def async_step_device_inspect_buttons(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Select a button to inspect its stored code, parameters and test transmission."""
+        dev_name = self._target_device or "Device"
+        buttons = self._get_device_buttons(dev_name)
+        if not buttons:
+            return await self.async_step_device_menu()
+
+        btn_list = sorted(list(buttons.keys()))
+        if user_input is not None:
+            self._inspect_button_name = user_input.get("button_name")
+            return await self.async_step_device_inspect_button_detail()
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    "button_name",
+                    default=btn_list[0] if btn_list else "",
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[SelectOptionDict(value=b, label=b) for b in btn_list],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="device_inspect_buttons",
+            data_schema=schema,
+            description_placeholders={
+                "device_name": dev_name,
+            },
+        )
+
+    async def async_step_device_inspect_button_detail(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Display details of chosen button and provide test/management options."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._inspect_button_name or ""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+        is_es = (getattr(self.hass.config, "language", "") or "").lower().startswith("es")
+
+        buttons = self._get_device_buttons(dev_name)
+        full_key = buttons.get(btn_name)
+        code_data = saved.get(full_key) if full_key else None
+
+        if not code_data:
+            return await self.async_step_device_inspect_buttons()
+
+        details_lines = []
+        has_code = False
+        has_raw = False
+        curr_mode = "code"
+
+        if isinstance(code_data, dict):
+            c_type = code_data.get("type", "code")
+            curr_mode = code_data.get("send_mode", "code" if "code" in code_data and code_data["code"] is not None else "raw")
+            repeats = code_data.get("repeats", DEFAULT_REPEATS)
+            details_lines.append(f"Tipo de Registro: {c_type}")
+            details_lines.append(f"Modo de Envio Preferido: {'Codigo Estandar' if curr_mode == 'code' else 'Pulsos Raw'}")
+
+            if "code" in code_data and code_data["code"] is not None:
+                has_code = True
+                c_val = code_data["code"]
+                hex_str = f" (0x{int(c_val):X})" if isinstance(c_val, (int, str)) and str(c_val).isdigit() else ""
+                details_lines.append(f"Codigo: {c_val}{hex_str}")
+                details_lines.append(
+                    f"Bits: {code_data.get('bits', 24)} | "
+                    f"Protocolo: {code_data.get('protocol', 1)} | "
+                    f"Pulso: {code_data.get('pulse_length', 350)} us"
+                )
+
+            raw_str = code_data.get("raw") or ""
+            if raw_str:
+                has_raw = True
+                p_list = [p.strip() for p in raw_str.split(",") if p.strip()]
+                preview = ",".join(p_list[:12]) + ("..." if len(p_list) > 12 else "")
+                details_lines.append(f"Pulsos Raw ({len(p_list)} pulsos): {preview}")
+
+            details_lines.append(f"Repeticiones de Envio: {repeats}")
+        elif isinstance(code_data, str):
+            has_raw = True
+            curr_mode = "raw"
+            p_list = [p.strip() for p in code_data.split(",") if p.strip()]
+            preview = ",".join(p_list[:12]) + ("..." if len(p_list) > 12 else "")
+            details_lines.append("Tipo de Registro: raw")
+            details_lines.append("Modo de Envio Preferido: Pulsos Raw")
+            details_lines.append(f"Pulsos Raw ({len(p_list)} pulsos): {preview}")
+
+        msg = f"{self._inspect_message}\n\n" if self._inspect_message else ""
+        self._inspect_message = None
+
+        menu: dict[str, str] = {}
+        if is_es:
+            if has_code:
+                menu["inspect_test_code"] = "Probar Envio RF (Codigo Estandar)"
+            if has_raw:
+                menu["inspect_test_raw"] = "Probar Envio RF (Pulsos Raw)"
+            if has_code and has_raw:
+                target_label = "Pulsos Raw" if curr_mode == "code" else "Codigo Estandar"
+                menu["inspect_toggle_mode"] = f"Cambiar Modo de Envio a: {target_label}"
+            menu["inspect_overwrite_last_code"] = "Sobrescribir con 'Last Code' actual"
+            menu["device_inspect_buttons"] = "Inspeccionar Otro Boton"
+            menu["device_menu"] = f"Volver al Menu de {dev_name}"
+        else:
+            if has_code:
+                menu["inspect_test_code"] = "Test RF Transmit (Standard Code)"
+            if has_raw:
+                menu["inspect_test_raw"] = "Test RF Transmit (Raw Pulses)"
+            if has_code and has_raw:
+                target_label = "Raw Pulses" if curr_mode == "code" else "Standard Code"
+                menu["inspect_toggle_mode"] = f"Switch Preferred Mode to: {target_label}"
+            menu["inspect_overwrite_last_code"] = "Overwrite with current 'Last Code'"
+            menu["device_inspect_buttons"] = "Inspect Another Button"
+            menu["device_menu"] = f"Return to {dev_name} Menu"
+
+        return self.async_show_menu(
+            step_id="device_inspect_button_detail",
+            menu_options=menu,
+            description_placeholders={
+                "button_name": btn_name,
+                "device_name": dev_name,
+                "inspect_message": msg,
+                "button_details": "\n".join(details_lines),
+            },
+        )
+
+    async def async_step_inspect_test_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Transmit inspected button using standard protocol code."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._inspect_button_name or ""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+        saved = entry_data.get("saved_codes", {})
+        buttons = self._get_device_buttons(dev_name)
+        full_key = buttons.get(btn_name)
+        code_data = saved.get(full_key) if full_key else None
+
+        if client and isinstance(code_data, dict) and "code" in code_data and code_data["code"] is not None:
+            repeats = code_data.get("repeats", DEFAULT_REPEATS)
+            try:
+                await client.async_send_code(
+                    code=code_data["code"],
+                    bits=code_data.get("bits", 24),
+                    protocol=code_data.get("protocol", 1),
+                    pulse_length=code_data.get("pulse_length", 350),
+                    repeats=repeats,
+                )
+                self._inspect_message = "Transmitido Codigo Estandar correctamente. Comprueba si el aparato ha reaccionado."
+            except Exception as err:
+                self._inspect_message = f"Error transmitiendo codigo: {err}"
+        return await self.async_step_device_inspect_button_detail()
+
+    async def async_step_inspect_test_raw(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Transmit inspected button using raw pulse train."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._inspect_button_name or ""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+        saved = entry_data.get("saved_codes", {})
+        buttons = self._get_device_buttons(dev_name)
+        full_key = buttons.get(btn_name)
+        code_data = saved.get(full_key) if full_key else None
+
+        raw_val = None
+        repeats = DEFAULT_REPEATS
+        if isinstance(code_data, dict):
+            raw_val = code_data.get("raw")
+            repeats = code_data.get("repeats", DEFAULT_REPEATS)
+        elif isinstance(code_data, str):
+            raw_val = code_data
+
+        if client and raw_val:
+            try:
+                await client.async_send_raw(raw_val, repeats=repeats)
+                self._inspect_message = "Transmitidos Pulsos Raw correctamente. Comprueba si el aparato ha reaccionado."
+            except Exception as err:
+                self._inspect_message = f"Error transmitiendo raw: {err}"
+        return await self.async_step_device_inspect_button_detail()
+
+    async def async_step_inspect_toggle_mode(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Toggle preferred send mode between code and raw."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._inspect_button_name or ""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        saved = entry_data.get("saved_codes", {})
+        buttons = self._get_device_buttons(dev_name)
+        full_key = buttons.get(btn_name)
+        code_data = saved.get(full_key) if full_key else None
+
+        if isinstance(code_data, dict):
+            cur = code_data.get("send_mode", "code")
+            new_mode = "raw" if cur == "code" else "code"
+            code_data["send_mode"] = new_mode
+            await entry_data["store"].async_save(saved)
+            mode_lbl = "Pulsos Raw" if new_mode == "raw" else "Codigo Estandar"
+            self._inspect_message = f"Modo de envio cambiado a: {mode_lbl}."
+
+        return await self.async_step_device_inspect_button_detail()
+
+    async def async_step_inspect_overwrite_last_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Overwrite inspected button with data from currently captured Last Code."""
+        dev_name = self._target_device or "Device"
+        btn_name = self._inspect_button_name or ""
+        entry_id = self.config_entry.entry_id
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry_id, {})
+        client: Esp32Cc1101Client | None = entry_data.get("client")
+        saved = entry_data.get("saved_codes", {})
+        buttons = self._get_device_buttons(dev_name)
+        full_key = buttons.get(btn_name)
+
+        if not client or (not client.last_code and client.last_decoded_code is None):
+            self._inspect_message = "No hay ninguna senal capturada en 'Last Code' para copiar. Pulsa el mando fisico primero."
+            return await self.async_step_device_inspect_button_detail()
+
+        if full_key and full_key in saved:
+            cur = saved[full_key]
+            old_repeats = cur.get("repeats", DEFAULT_REPEATS) if isinstance(cur, dict) else DEFAULT_REPEATS
+            saved[full_key] = {
+                "type": "code" if client.last_decoded_code is not None else "raw",
+                "code": client.last_decoded_code,
+                "bits": client.last_bit_length or 24,
+                "protocol": client.last_protocol or 1,
+                "pulse_length": client.last_pulse_length or 350,
+                "raw": client.last_code or "",
+                "device": dev_name,
+                "command": btn_name,
+                "repeats": old_repeats,
+                "send_mode": "code" if client.last_decoded_code is not None else "raw",
+            }
+            await entry_data["store"].async_save(saved)
+            self._inspect_message = "Boton sobrescrito con exito con los datos exactos del 'Last Code'."
+
+        return await self.async_step_device_inspect_button_detail()
 
     async def async_step_device_configure_button(
         self, user_input: dict[str, Any] | None = None

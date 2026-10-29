@@ -81,7 +81,9 @@
         "title": "Configurar Dispositivo: {device_name}",
         "description": "{status_msg}Selecciona una acción para este dispositivo.",
         "menu_options": {
-          "device_learn_button": "Aprender Nuevo Botón",
+          "device_learn_button": "Aprender Nuevo Botón (5 segundos)",
+          "device_save_last_code": "Guardar Último Código ('Last Code') como Botón",
+          "device_inspect_buttons": "Inspeccionar / Probar Botones Guardados",
           "device_configure_button": "Configurar Repeticiones de Botón",
           "device_delete_button": "Eliminar Botón de este Dispositivo",
           "device_delete_this_device": "Eliminar este Dispositivo Completo",
@@ -176,6 +178,33 @@
         "description": "Selecciona el botón que deseas eliminar de este dispositivo.",
         "data": {
           "button_name": "Botón a Eliminar"
+        }
+      },
+      "device_save_last_code": {
+        "title": "Guardar Último Código: {device_name}",
+        "description": "Guarda directamente la última señal capturada en '**Last Code**' como un botón para **{device_name}**.\n\n📡 **Última Señal Capturada:**\n{last_code_desc}\n\nIntroduce el nombre para este botón:",
+        "data": {
+          "button_name": "Nombre del Botón",
+          "repeats": "Repeticiones de Transmisión"
+        }
+      },
+      "device_inspect_buttons": {
+        "title": "Inspeccionar Botones: {device_name}",
+        "description": "Selecciona el botón que deseas inspeccionar para ver los códigos, protocolo y pulsos raw guardados.",
+        "data": {
+          "button_name": "Botón a Inspeccionar"
+        }
+      },
+      "device_inspect_button_detail": {
+        "title": "Detalles del Botón: {button_name}",
+        "description": "{inspect_message}Información técnica almacenada en Home Assistant:\n\n{button_details}\n\nSelecciona una acción:",
+        "menu_options": {
+          "inspect_test_code": "Probar Envío RF (Código Estándar)",
+          "inspect_test_raw": "Probar Envío RF (Pulsos Raw)",
+          "inspect_toggle_mode": "Cambiar Modo de Envío Preferido",
+          "inspect_overwrite_last_code": "Sobrescribir con 'Last Code' actual",
+          "device_inspect_buttons": "Inspeccionar Otro Botón",
+          "device_menu": "Volver al Menú del Dispositivo"
         }
       },
       "radio_settings": {

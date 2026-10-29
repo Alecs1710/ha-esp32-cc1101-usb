@@ -13,7 +13,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import Esp32Cc1101Client
-from .const import CONF_PORT, DOMAIN
+from .const import CONF_PORT, DEFAULT_REPEATS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -165,6 +165,50 @@ class Esp32SavedCommandButton(ButtonEntity):
             via_device=(DOMAIN, entry.entry_id),
         )
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return rich stored RF command attributes for easy inspection."""
+        saved_codes = self._entry_data.get("saved_codes", {})
+        code_data = saved_codes.get(self._command_name)
+        if not code_data:
+            from . import find_saved_command
+            _, code_data = find_saved_command(self.hass, self.entry.entry_id, self._command_name)
+
+        if not code_data:
+            return {"status": "not_found"}
+
+        attrs: dict[str, Any] = {
+            "command_name": self._command_name,
+        }
+        if isinstance(code_data, dict):
+            attrs["type"] = code_data.get("type", "code")
+            attrs["send_mode"] = code_data.get("send_mode", "code" if "code" in code_data else "raw")
+            if "code" in code_data and code_data["code"] is not None:
+                c = code_data["code"]
+                attrs["code"] = c
+                try:
+                    attrs["code_hex"] = f"0x{int(c):X}"
+                except (ValueError, TypeError):
+                    pass
+            attrs["bits"] = code_data.get("bits")
+            attrs["protocol"] = code_data.get("protocol")
+            attrs["pulse_length_us"] = code_data.get("pulse_length")
+            attrs["repeats"] = code_data.get("repeats", DEFAULT_REPEATS)
+            raw = code_data.get("raw") or ""
+            if raw:
+                pulses = [p.strip() for p in raw.split(",") if p.strip()]
+                attrs["raw_pulse_count"] = len(pulses)
+                attrs["raw_preview"] = ",".join(pulses[:10]) + ("..." if len(pulses) > 10 else "")
+            attrs["device"] = code_data.get("device")
+        elif isinstance(code_data, str):
+            attrs["type"] = "raw"
+            attrs["send_mode"] = "raw"
+            pulses = [p.strip() for p in code_data.split(",") if p.strip()]
+            attrs["raw_pulse_count"] = len(pulses)
+            attrs["raw_preview"] = ",".join(pulses[:10]) + ("..." if len(pulses) > 10 else "")
+
+        return attrs
+
     async def async_press(self) -> None:
         """Transmit saved RF command."""
         saved_codes = self._entry_data.get("saved_codes", {})
@@ -177,24 +221,13 @@ class Esp32SavedCommandButton(ButtonEntity):
                 f"Command '{self._command_name}' no longer exists in storage"
             )
         custom_repeats = code.get("repeats") if isinstance(code, dict) else None
+        send_mode = code.get("send_mode") if isinstance(code, dict) else None
 
-        if isinstance(code, dict) and "code" in code:
-            code_val = code["code"]
-            if code.get("type") == "rolling_code":
-                delta = code.get("delta", 15)
-                next_code = code_val + delta
-                # Counter wrap handling for 4-bit counter (0..7) with inverted checksum nibble
-                counter = ((next_code & 0xFF) >> 4) & 0x0F
-                if counter > 7:
-                    next_code = (code.get("base_id", 0) << 8) | 0x07
-                code["code"] = next_code
-                self.hass.async_create_task(
-                    self._entry_data["store"].async_save(self._entry_data["saved_codes"])
-                )
-                code_val = next_code
-
+        if isinstance(code, dict) and send_mode == "raw" and "raw" in code and code["raw"]:
+            await self.client.async_send_raw(code["raw"], repeats=custom_repeats)
+        elif isinstance(code, dict) and "code" in code and code["code"] is not None:
             await self.client.async_send_code(
-                code=code_val,
+                code=code["code"],
                 bits=code.get("bits", 24),
                 protocol=code.get("protocol", 1),
                 pulse_length=code.get("pulse_length", 350),

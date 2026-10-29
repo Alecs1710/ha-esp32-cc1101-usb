@@ -228,26 +228,6 @@ def _analyze_learning_consensus(
 
                 most_common_code, code_count = Counter(codes).most_common(1)[0]
                 if code_count >= 3:
-                    # Check for 32-bit counter rolling code signature (4-bit counter + 4-bit inverted checksum == 7)
-                    if dominant_bits == 32:
-                        b = most_common_code & 0xFF
-                        if (((b >> 4) & 0x0F) + (b & 0x0F)) == 7:
-                            base_id = most_common_code >> 8
-                            desc = (
-                                f"Decoded Rolling Code "
-                                f"(Base: 0x{base_id:06X}, Step: +15, 32b, Proto {proto})"
-                            )
-                            return {
-                                "type": "rolling_code",
-                                "code": most_common_code,
-                                "base_id": base_id,
-                                "delta": 15,
-                                "bits": dominant_bits,
-                                "protocol": proto,
-                                "pulse_length": pulse_len,
-                                "raw": rep_raw,
-                            }, desc
-
                     desc = (
                         f"Decoded Protocol "
                         f"(Code: {most_common_code}, {dominant_bits}b, Proto {proto}, {code_count} frames)"
@@ -729,18 +709,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             code_map.setdefault(str(c_val), []).append(k)
 
         if v.get("type") == "rolling_code":
-            bits = v.get("bits", 24)
-            code_val = v.get("code", 0)
-            base_id = v.get("base_id", 0)
-            # If not 32-bit or base_id is only 16-bit (<= 0xFFFF), it is a corrupted fixed code
-            if bits < 32 or (isinstance(code_val, int) and code_val <= 0xFFFFFF) or (isinstance(base_id, int) and base_id <= 0xFFFF):
-                _LOGGER.warning(
-                    "Sanitizing corrupted rolling_code button '%s': restoring to fixed code", k
-                )
-                v["type"] = "code"
-                v.pop("base_id", None)
-                v.pop("delta", None)
-                modified_store = True
+            _LOGGER.warning(
+                "Sanitizing corrupted rolling_code button '%s': restoring to reliable fixed code", k
+            )
+            v["type"] = "code"
+            v.pop("base_id", None)
+            v.pop("delta", None)
+            modified_store = True
 
     # Warn if duplicate codes exist across different buttons
     for c_str, btn_list in code_map.items():
@@ -846,7 +821,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise HomeAssistantError(f"Saved RF command '{name}' not found")
             repeats = call.data.get("repeats")
             _LOGGER.info("Transmitting saved RF command '%s' (matched '%s')", name, matched_key)
-            if isinstance(cmd_data, dict) and "code" in cmd_data:
+            send_mode = cmd_data.get("send_mode") if isinstance(cmd_data, dict) else None
+            if isinstance(cmd_data, dict) and send_mode == "raw" and "raw" in cmd_data and cmd_data["raw"]:
+                await data["client"].async_send_raw(cmd_data["raw"], repeats=repeats)
+            elif isinstance(cmd_data, dict) and "code" in cmd_data and cmd_data["code"] is not None:
                 await data["client"].async_send_code(
                     code=cmd_data["code"],
                     bits=cmd_data.get("bits", 24),

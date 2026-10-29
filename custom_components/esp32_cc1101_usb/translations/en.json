@@ -81,7 +81,9 @@
         "title": "Configure Device: {device_name}",
         "description": "{status_msg}Select an action for this device.",
         "menu_options": {
-          "device_learn_button": "Learn New Button",
+          "device_learn_button": "Learn New Button (5 seconds hold)",
+          "device_save_last_code": "Save Last Captured Code ('Last Code') as Button",
+          "device_inspect_buttons": "Inspect / Test Saved Buttons",
           "device_configure_button": "Configure Button Repetitions",
           "device_delete_button": "Delete Button from Device",
           "device_delete_this_device": "Delete Entire Device",
@@ -176,6 +178,33 @@
         "description": "Select the button to delete from this device.",
         "data": {
           "button_name": "Button to Delete"
+        }
+      },
+      "device_save_last_code": {
+        "title": "Save Last Code: {device_name}",
+        "description": "Directly save the last RF signal captured in '**Last Code**' as a button for **{device_name}**.\n\n📡 **Last Captured Signal:**\n{last_code_desc}\n\nEnter a name for this button:",
+        "data": {
+          "button_name": "Button Name",
+          "repeats": "Transmit Repetitions"
+        }
+      },
+      "device_inspect_buttons": {
+        "title": "Inspect Saved Buttons: {device_name}",
+        "description": "Select the button to inspect its stored code, protocol, and raw pulses.",
+        "data": {
+          "button_name": "Button to Inspect"
+        }
+      },
+      "device_inspect_button_detail": {
+        "title": "Button Details: {button_name}",
+        "description": "{inspect_message}Technical details stored in Home Assistant:\n\n{button_details}\n\nSelect an action:",
+        "menu_options": {
+          "inspect_test_code": "Test RF Transmit (Standard Code)",
+          "inspect_test_raw": "Test RF Transmit (Raw Pulses)",
+          "inspect_toggle_mode": "Switch Preferred Mode",
+          "inspect_overwrite_last_code": "Overwrite with current 'Last Code'",
+          "device_inspect_buttons": "Inspect Another Button",
+          "device_menu": "Return to Device Menu"
         }
       },
       "radio_settings": {
