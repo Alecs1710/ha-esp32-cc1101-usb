@@ -411,9 +411,9 @@ async def async_start_learning_flow(
 
     persistent_notification.async_create(
         hass,
-        f"⏳ **Paso 1 de 2: Grabando señal de `{display_label}`**\n\n"
-        f"👉 **Mantén pulsado el botón en tu mando físico durante 5 segundos de forma CONTINUA.**\n\n"
-        f"📶 *Filtro de potencia activo:* `{learn_rssi} dBm` (solo señales cercanas).\n\n"
+        f"**Paso 1 de 2: Grabando señal de `{display_label}`**\n\n"
+        f"**Mantén pulsado el botón en tu mando físico durante 5 segundos de forma CONTINUA.**\n\n"
+        f"*Filtro de potencia activo:* `{learn_rssi} dBm` (solo señales cercanas).\n\n"
         f"*(Mantén el mando a 10–30 cm del transceptor CC1101 para una captura limpia sin interferencias).* ",
         title=f"Grabando Botón: {display_label} (Paso 1/2)",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
@@ -1069,10 +1069,10 @@ async def _async_learning_recording_timer(
         )
         persistent_notification.async_create(
             hass,
-            f"⚠️ **No se pudo aprender el botón `{display_label}`**\n\n"
+            f"**No se pudo aprender el botón `{display_label}`**\n\n"
             f"**Motivo:** {desc}.\n\n"
             f"Se recibieron {len(samples)} paquetes durante los 5 segundos, pero no hubo suficiente consistencia de señal o se detectaron interferencias.\n\n"
-            f"👉 **Consejos:**\n"
+            f"**Consejos:**\n"
             f"- Mantén el mando a 10–30 cm del transceptor CC1101.\n"
             f"- Mantén el botón pulsado firmemente y sin soltar durante los 5 segundos completos.\n"
             f"- Si hay interferencias de otros mandos, puedes ajustar el filtro de potencia de señal para restringir solo a señales potentes.\n"
@@ -1137,9 +1137,9 @@ async def _async_learning_recording_timer(
 
     persistent_notification.async_create(
         hass,
-        f"✅ **¡Botón `{display_label}` aprendido y guardado!**\n\n"
+        f"**¡Botón `{display_label}` aprendido y guardado!**\n\n"
         f"Señal analizada con éxito: `{desc}`.\n\n"
-        f"👉 **Pulsa el botón en tu mando físico una sola vez para comprobar que el sensor lo detecta en tiempo real.**\n\n"
+        f"Pulsa el botón en tu mando físico una sola vez para comprobar que el sensor lo detecta en tiempo real.\n\n"
         f"*(El botón ya está guardado en Home Assistant. Tienes 15 segundos para probar la detección).* ",
         title=f"Botón Guardado: {display_label} (Prueba de Pulsación)",
         notification_id=f"{DOMAIN}_learning_{entry_id}",
@@ -1188,7 +1188,7 @@ async def _async_learning_verification_timeout(
     )
     persistent_notification.async_create(
         hass,
-        f"✅ **Botón `{display_label}` guardado:**\n\n"
+        f"**Botón `{display_label}` guardado:**\n\n"
         f"El botón ha quedado guardado con la señal confirmada de los 5 segundos ({desc}).\n\n"
         f"Ya está listo para usar y enviar desde tu panel de Home Assistant.",
         title=f"Botón Disponible: {display_label}",
@@ -1300,7 +1300,7 @@ async def _async_learning_verification_success(
 
     persistent_notification.async_create(
         hass,
-        f"🎉 **¡Botón `{display_label}` aprendido y verificado con éxito!**\n\n"
+        f"**¡Botón `{display_label}` aprendido y verificado con éxito!**\n\n"
         f"**Detalles:** {desc}\n\n"
         f"Home Assistant ha detectado la pulsación de confirmación correctamente.\n\n"
         f"Se ha añadido la entidad botón **{cmd_name}** a tu dispositivo **{dev_name or 'Mandos RF'}** y el sensor de último botón pulsado ha sido actualizado.",
@@ -1635,6 +1635,13 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     client: Esp32Cc1101Client = entry_data["client"]
+    new_port = entry.data.get(CONF_PORT)
+    if new_port and client.port != new_port:
+        _LOGGER.info("Serial port changed from %s to %s, reconnecting client...", client.port, new_port)
+        await client.async_stop()
+        client.port = new_port
+        await client.async_start()
+
     new_freq = entry.options.get(CONF_FREQUENCY, entry.data.get(CONF_FREQUENCY, DEFAULT_FREQUENCY))
     new_mod = entry.options.get(CONF_MODULATION, entry.data.get(CONF_MODULATION, DEFAULT_MODULATION))
     new_bw = entry.options.get(CONF_BANDWIDTH, entry.data.get(CONF_BANDWIDTH, DEFAULT_BANDWIDTH))

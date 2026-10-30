@@ -298,20 +298,30 @@ class Esp32Cc1101Client:
             now_ts = time.time()
 
             # Multi-repeat burst fragment suppression:
-            # If we recently received a longer complete frame (e.g. 32b) within the last 400ms,
-            # suppress shorter fragments (e.g. 12b, 16b, 20b, 24b) from the same physical press.
-            if (now_ts - self._last_rx_burst_time) < 0.400:
-                if bits < self._last_rx_burst_max_bits:
-                    _LOGGER.debug(
-                        "Suppressing %d-bit RF fragment (code=%s) during active %d-bit burst",
-                        bits,
-                        payload.get("code"),
-                        self._last_rx_burst_max_bits,
-                    )
-                    return
-                if bits > self._last_rx_burst_max_bits:
-                    self._last_rx_burst_max_bits = bits
-            else:
+            # If we recently received a longer complete frame (e.g. 32b) within the last 300ms,
+            # suppress shorter fragments ONLY if they are bitwise prefixes of that same code.
+            # Never suppress different codes, different protocols, or other remotes.
+            rx_val = payload.get("code")
+            is_fragment = False
+            if (now_ts - self._last_rx_burst_time) < 0.300 and bits < self._last_rx_burst_max_bits:
+                if self.last_decoded_code is not None and rx_val is not None:
+                    try:
+                        shift = self._last_rx_burst_max_bits - bits
+                        if shift > 0 and (int(self.last_decoded_code) >> shift) == int(rx_val):
+                            is_fragment = True
+                    except (ValueError, TypeError):
+                        pass
+
+            if is_fragment:
+                _LOGGER.debug(
+                    "Suppressing %d-bit RF fragment (code=%s) during active %d-bit burst",
+                    bits,
+                    payload.get("code"),
+                    self._last_rx_burst_max_bits,
+                )
+                return
+
+            if (now_ts - self._last_rx_burst_time) >= 0.300 or bits >= self._last_rx_burst_max_bits:
                 self._last_rx_burst_max_bits = bits
 
             self._last_rx_burst_time = now_ts
@@ -355,7 +365,7 @@ class Esp32Cc1101Client:
         # Raw RF pulse train captured
         if event == "rx_raw" or "raw" in payload:
             now_ts = time.time()
-            if (now_ts - self._last_rx_burst_time) < 0.500:
+            if (now_ts - self._last_rx_burst_time) < 0.250:
                 _LOGGER.debug(
                     "Suppressing trailing rx_raw burst (%.3fs after decoded rx_code burst)",
                     now_ts - self._last_rx_burst_time,

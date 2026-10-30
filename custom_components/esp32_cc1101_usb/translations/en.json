@@ -32,122 +32,157 @@
     "step": {
       "init": {
         "title": "ESP32 CC1101 RF Studio",
-        "description": "Choose an action to manage your RF devices or tune radio settings.",
+        "description": "### ESP32 CC1101 RF Control Center\n{status_msg}Select a category to manage your remotes, transfer data, or tune radio settings.",
         "menu_options": {
-          "manage_devices": "Manage & Learn Buttons by Device",
-          "delete_menu": "Delete RF Buttons or Devices",
-          "radio_settings": "CC1101 Radio Parameters & Tuning"
-        }
-      },
-      "delete_menu": {
-        "title": "Delete RF Buttons or Devices",
-        "description": "{status_msg}Select what you would like to delete from your system.",
-        "menu_options": {
-          "delete_single_button": "Delete a Specific Button",
-          "delete_device": "Delete an Entire Device",
-          "init": "Return to Main Menu",
-          "finish": "Finish and Close"
-        }
-      },
-      "delete_single_button": {
-        "title": "Delete RF Button",
-        "description": "Select the button you wish to permanently delete from Home Assistant.",
-        "data": {
-          "button_name": "Button to Delete"
-        }
-      },
-      "delete_device": {
-        "title": "Delete Entire RF Device",
-        "description": "⚠️ Deleting a device will remove all of its buttons, its sensor, and its device card from Home Assistant.",
-        "data": {
-          "device_name": "Device to Delete"
-        }
-      },
-      "device_delete_this_device": {
-        "title": "Delete Device: {device_name}",
-        "description": "⚠️ Are you sure you want to delete **{device_name}** and all of its learned buttons?",
-        "data": {
-          "confirm": "Confirm permanent deletion"
+          "manage_devices": "Manage Devices & Remotes",
+          "export_json": "Export to JSON (Backup)",
+          "import_json": "Import from JSON",
+          "radio_settings": "Radio & USB Port Settings"
         }
       },
       "manage_devices": {
         "title": "RF Devices & Remotes",
-        "description": "Select an existing device to learn, configure or delete its buttons, or type a new device name directly.",
+        "description": "Select an existing device from the list to manage its buttons or type a new device name directly.",
         "data": {
           "device_name": "Device (choose existing or type new)"
         }
       },
       "device_menu": {
-        "title": "Configure Device: {device_name}",
-        "description": "{status_msg}Select an action for this device.",
+        "title": "Device: {device_name}",
+        "description": "### Device: {device_name}\n**Registered buttons:** {button_count}\n\n{status_msg}Select an action for this device:",
         "menu_options": {
-          "device_learn_button": "Learn New Button (5 seconds hold)",
-          "device_save_last_code": "Save Last Captured Code ('Last Code') as Button",
-          "device_inspect_buttons": "Inspect / Test Saved Buttons",
-          "device_configure_button": "Configure Button Repetitions",
-          "device_delete_button": "Delete Button from Device",
-          "device_delete_this_device": "Delete Entire Device",
+          "device_learn_button": "Learn New Button",
+          "device_manage_buttons": "Manage / Edit Buttons",
+          "device_edit_device": "Edit Device (Rename / Delete)",
           "manage_devices": "Change Device",
           "finish": "Finish and Close"
         }
       },
-      "create_device": {
-        "title": "Create New RF Device",
-        "description": "Enter a name for the device you want to control (e.g. Fan, Blinds, Garage). After creation, open the device to learn its remote buttons.",
+      "device_manage_buttons": {
+        "title": "Buttons for {device_name}",
+        "description": "{status_msg}Select the button you wish to view, test or edit:",
         "data": {
-          "device_name": "Device Name"
+          "button_name": "Button to Manage"
+        }
+      },
+      "button_edit_menu": {
+        "title": "Edit Button: {button_name}",
+        "description": "{inspect_message}### Stored Technical RF Parameters\n{button_details}\n\nSelect an action:",
+        "menu_options": {
+          "button_test_code": "Test RF Transmit (Code)",
+          "button_test_raw": "Test RF Transmit (Raw Pulses)",
+          "button_relearn": "Overwrite / Re-record Code (5 seconds)",
+          "button_rename": "Rename Button",
+          "button_move": "Move to Another Device",
+          "button_repeats": "Adjust Transmit Repeats",
+          "button_toggle_mode": "Switch Preferred Mode",
+          "button_delete": "Delete this Button",
+          "device_manage_buttons": "Select Another Button",
+          "device_menu": "Return to Device Menu"
+        }
+      },
+      "button_rename": {
+        "title": "Rename Button: {button_name}",
+        "description": "Enter the new name for this button in '{device_name}':",
+        "data": {
+          "new_button_name": "New Button Name"
+        }
+      },
+      "button_move": {
+        "title": "Move Button: {button_name}",
+        "description": "Select or type the destination device you want to transfer '{button_name}' to:",
+        "data": {
+          "destination_device": "Destination Device"
+        }
+      },
+      "button_repeats": {
+        "title": "Transmit Repeats: {button_name}",
+        "description": "Configure how many burst repetitions will be transmitted when '{button_name}' is pressed:",
+        "data": {
+          "repeats": "Transmit Repeats"
+        }
+      },
+      "button_delete": {
+        "title": "Delete Button: {button_name}",
+        "description": "Are you sure you want to permanently delete the button '{button_name}' from '{device_name}'?",
+        "data": {
+          "confirm": "Confirm permanent deletion"
+        }
+      },
+      "device_edit_device": {
+        "title": "Edit Device: {device_name}",
+        "description": "Manage device '{device_name}' (registered buttons: {button_count}). Select an option:",
+        "menu_options": {
+          "device_rename": "Rename Device",
+          "device_delete": "Delete Entire Device",
+          "device_menu": "Return to Device Menu"
+        }
+      },
+      "device_rename": {
+        "title": "Rename Device: {device_name}",
+        "description": "Enter the new name for this device. All of its buttons and its sensor will be updated automatically:",
+        "data": {
+          "new_device_name": "New Device Name"
+        }
+      },
+      "device_delete": {
+        "title": "Delete Device: {device_name}",
+        "description": "Are you sure you want to delete '{device_name}' and all of its learned buttons from Home Assistant?",
+        "data": {
+          "confirm": "Confirm permanent deletion"
         }
       },
       "device_learn_button": {
         "title": "Learn RF Button: {device_name}",
-        "description": "Step 1 of 3: Enter the button name, repeats, and learning signal power filter. When submitted, you will get a button to manually start recording.",
+        "description": "Step 1 of 2: Enter the button name, transmit repetitions, and recording signal power filter:",
         "data": {
-          "button_name": "Button / Command Name",
-          "repeats": "Transmit Repetitions",
-          "min_rssi": "Learning Signal Power Filter (dBm)"
+          "button_name": "Button Name / Command",
+          "repeats": "Transmission Repeats",
+          "min_rssi": "Recording Power Filter (dBm)"
         }
       },
       "device_learn_record": {
         "title": "Record Button: {button_name}",
-        "description": "Ready to record button '**{button_name}**' for **{device_name}**.\n\n📶 **Active power filter:** `{learn_rssi} dBm` (only captures strong nearby signals; your normal sensitivity is automatically restored afterward).\n\n👉 **Instructions:**\n1. Hold your remote 10–30 cm from CC1101.\n2. Click **Submit / Start Recording** below when ready.\n3. As soon as you click, **hold down the button on your remote continuously for 5 seconds**."
+        "description": "You are about to record the button '{button_name}' for '{device_name}'.\n\nActive power filter: `{learn_rssi} dBm` (only strong nearby signals accepted; normal sensitivity will be restored automatically when done).\n\nInstructions:\n1. Hold remote 10–30 cm from CC1101 transceiver.\n2. Click Submit below to begin.\n3. As soon as you click Submit, press and hold the button on your physical remote continuously for 5 seconds."
       },
       "device_learn_failed": {
         "title": "Recording Failed: {button_name}",
-        "description": "⚠️ Could not detect a consistent, clean signal.\n\n**Reason:** {error_reason} ({sample_count} bursts received).\n**Current power filter:** {learn_rssi} dBm.\n\nIf there is noise or distant remotes interfering, you can tune the power filter to restrict strictly to strong signals near the antenna.\n\nWhat would you like to do?",
+        "description": "No consistent, stable signal was detected.\n\nReason: {error_reason} ({sample_count} bursts received).\nCurrent power filter: {learn_rssi} dBm.\n\nWhat would you like to do?",
         "menu_options": {
           "device_learn_record": "Retry Recording (5 seconds hold)",
-          "device_learn_tune_rssi": "Tune Signal Power Filter (Strong Signals)",
+          "device_learn_tune_rssi": "Tune Power Filter",
           "device_learn_button": "Change Button Name",
           "device_menu": "Return to Device Menu"
         }
       },
       "device_learn_tune_rssi": {
-        "title": "Tune Signal Power Filter: {button_name}",
-        "description": "Configure the signal power threshold (RSSI) exclusively for recording this button.\n\nHigher values (e.g. -50 dBm or -40 dBm) strictly restrict recording to strong signals held right next to the CC1101, ignoring ambient RF noise and neighbor remotes.\n\nOnce learned, normal sensitivity is automatically restored for long-range remote reception.",
+        "title": "Tune Power Filter: {button_name}",
+        "description": "Configure the signal power filter (RSSI) exclusively for recording this button. Higher values (e.g. -50 dBm or -40 dBm) strictly limit recording to strong signals held right next to the antenna, ignoring noise or distant remotes:",
         "data": {
-          "learn_min_rssi": "Temporary Power Filter (dBm)"
+          "learn_min_rssi": "Recording Power Filter (dBm)"
         }
       },
       "device_learn_verify": {
         "title": "Test Remote Detection: {button_name}",
-        "description": "Button is already saved (**{candidate_desc}**).\n\nTo verify live remote detection:\n1. Click **Submit / Start Detection** below.\n2. Press your remote button **ONCE** (you have 12 seconds)."
+        "description": "Button is already successfully saved ({candidate_desc}).\n\nIf you want to test physical remote detection in real time:\n1. Click Submit below.\n2. Press the remote button ONCE (you have 12 seconds)."
       },
       "device_learn_verify_failed": {
         "title": "Detection Not Received: {button_name}",
-        "description": "ℹ️ Single press was not detected within 12 seconds.\n\nButton **{button_name}** remains safely saved with the confirmed 5-second signal (**{candidate_desc}**).\n\nWhat would you like to do next?",
+        "description": "No button press was detected within the time limit.\n\nThe button '{button_name}' remains saved with the confirmed 5-second signal ({candidate_desc}).\n\nWhat would you like to do now?",
         "menu_options": {
-          "device_learn_verify": "Retry Detection (Press 1 time)",
+          "device_learn_verify": "Retry Verification (press 1 time)",
           "device_test_send": "Test RF Transmit from Home Assistant",
           "device_learn_button": "Learn another button for this device",
-          "device_learn_record": "Re-record (5 seconds continuous hold)",
+          "device_learn_record": "Re-record (5 seconds hold)",
           "device_menu": "Finish and return to device menu"
         }
       },
       "device_test_send": {
         "title": "Test RF Transmit: {button_name}",
-        "description": "📡 Transmitting RF command for **{button_name}** ({device_name}).\n\nCheck if your appliance reacted.\n\nWhat would you like to do next?",
+        "description": "Transmitting RF signal for '{button_name}' ({device_name}).\n\nCheck if your physical appliance reacted.\n\nWhat would you like to do now?",
         "menu_options": {
-          "device_test_send": "Send Signal Again",
+          "device_test_send": "Send Signal Again (Code)",
+          "device_test_send_raw": "Test Transmit using Raw Pulses",
           "device_learn_verify": "Test Physical Remote Detection",
           "device_learn_button": "Learn another button for this device",
           "device_menu": "Return to device menu",
@@ -155,8 +190,8 @@
         }
       },
       "device_learn_success": {
-        "title": "Button Learned and Saved Successfully!",
-        "description": "🎉 Button **{button_name}** has been saved for **{device_name}**.\n\nConfirmed signal: **{candidate_desc}**.\n\nA button entity has been created on your dashboard and device status sensor updated.\n\nWhat would you like to do next?",
+        "title": "Button Learned & Saved Successfully!",
+        "description": "The button '{button_name}' has been saved for '{device_name}'.\n\nConfirmed signal: {candidate_desc}.\n\nThe button entity has been added to your dashboard and the device sensor has been updated.\n\nWhat would you like to do now?",
         "menu_options": {
           "device_test_send": "Test RF Transmit (Check appliance)",
           "device_learn_verify": "Test Physical Remote Detection",
@@ -165,70 +200,45 @@
           "finish": "Finish and Close"
         }
       },
-      "device_configure_button": {
-        "title": "Configure Button: {device_name}",
-        "description": "Select an existing button and adjust its transmit repetitions.",
-        "data": {
-          "button_name": "Button to Configure",
-          "repeats": "Transmit Repetitions"
-        }
-      },
-      "device_delete_button": {
-        "title": "Delete Button: {device_name}",
-        "description": "Select the button to delete from this device.",
-        "data": {
-          "button_name": "Button to Delete"
-        }
-      },
-      "device_save_last_code": {
-        "title": "Save Last Code: {device_name}",
-        "description": "Directly save the last RF signal captured in '**Last Code**' as a button for **{device_name}**.\n\n📡 **Last Captured Signal:**\n{last_code_desc}\n\nEnter a name for this button:",
-        "data": {
-          "button_name": "Button Name",
-          "repeats": "Transmit Repetitions"
-        }
-      },
-      "device_inspect_buttons": {
-        "title": "Inspect Saved Buttons: {device_name}",
-        "description": "Select the button to inspect its stored code, protocol, and raw pulses.",
-        "data": {
-          "button_name": "Button to Inspect"
-        }
-      },
-      "device_inspect_button_detail": {
-        "title": "Button Details: {button_name}",
-        "description": "{inspect_message}Technical details stored in Home Assistant:\n\n{button_details}\n\nSelect an action:",
-        "menu_options": {
-          "inspect_test_code": "Test RF Transmit (Standard Code)",
-          "inspect_test_raw": "Test RF Transmit (Raw Pulses)",
-          "inspect_toggle_mode": "Switch Preferred Mode",
-          "inspect_overwrite_last_code": "Overwrite with current 'Last Code'",
-          "device_inspect_buttons": "Inspect Another Button",
-          "device_menu": "Return to Device Menu"
-        }
-      },
       "radio_settings": {
-        "title": "CC1101 Radio Parameters",
-        "description": "Configure operating frequency, modulation mode, and RF power levels in real time.",
+        "title": "CC1101 Radio & USB Port Settings",
+        "description": "Configure the connected USB serial port, carrier frequency, transmission power, and squelch in real-time:",
         "data": {
-          "frequency": "Operating Frequency & Hardware Band",
-          "modulation": "Modulation Mode",
-          "bandwidth": "Filter Bandwidth (kHz)",
-          "tx_power": "Transmit Power (dBm)",
-          "repeats": "Default Transmit Repeats",
+          "port": "USB Serial Port",
+          "frequency": "Operating Frequency",
+          "modulation": "Modulation",
+          "tx_power": "Transmission Power (dBm)",
           "min_rssi": "Receiver Sensitivity (Squelch dBm)",
-          "min_repeats": "Minimum Consecutive Repeats",
+          "repeats": "Default Transmit Repeats",
+          "bandwidth": "Filter Bandwidth (kHz)",
+          "min_repeats": "Consecutive Burst Repeats Filter",
           "rx_mode": "RF Reception Mode"
+        }
+      },
+      "export_json": {
+        "title": "Export Buttons to JSON",
+        "description": "### Backup RF Buttons & Devices\n**Devices:** {device_count} | **Buttons:** {button_count}{backup_note}\n\nYou can copy the JSON block below to save or migrate to another Home Assistant installation:\n```json\n{json_text}\n```"
+      },
+      "import_json": {
+        "title": "Import Buttons from JSON",
+        "description": "### Restore or Migrate RF Buttons\nPaste the JSON code containing your buttons below to import them into Home Assistant:",
+        "data": {
+          "json_data": "JSON Content",
+          "mode": "Import Mode"
         }
       }
     },
     "error": {
-      "device_name_required": "Please enter a name for the device.",
-      "button_name_required": "Please enter a name for the button to learn.",
-      "no_buttons_found": "No buttons found for this device."
+      "device_name_required": "Please enter a device name.",
+      "button_name_required": "Please enter a button name.",
+      "no_buttons_found": "No valid buttons were found in the provided JSON.",
+      "empty_json": "JSON content cannot be empty.",
+      "invalid_json": "The provided text is not valid JSON. Please check format.",
+      "same_device": "Destination device must be different from current device.",
+      "button_not_found": "The selected button was not found."
     },
     "abort": {
-      "no_buttons_found": "No buttons to delete for this device."
+      "no_buttons_found": "No buttons found to manage in this device."
     }
   },
   "entity": {
