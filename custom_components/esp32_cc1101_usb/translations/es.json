@@ -1,0 +1,265 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conectar ESP32 CC1101 USB",
+        "description": "Selecciona el puerto serie USB donde está conectado el transceptor ESP32 CC1101.",
+        "data": {
+          "port": "Puerto Serie USB",
+          "baudrate": "Velocidad en Baudios",
+          "frequency": "Frecuencia y Banda Hardware",
+          "modulation": "Modulación"
+        }
+      },
+      "usb_confirm": {
+        "title": "Transceptor ESP32 CC1101 Descubierto",
+        "description": "¿Deseas configurar el transceptor ESP32 CC1101 USB descubierto en `{device}`?",
+        "data": {
+          "baudrate": "Velocidad en Baudios",
+          "frequency": "Frecuencia y Banda Hardware",
+          "modulation": "Modulación"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se pudo conectar con el ESP32 en el puerto seleccionado."
+    },
+    "abort": {
+      "already_configured": "Este puerto serie ya está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ESP32 CC1101 RF Studio",
+        "description": "### Centro de Control RF ESP32 CC1101\n{status_msg}Selecciona una categoría para gestionar mandos, copias de seguridad o ajustes de radio.",
+        "menu_options": {
+          "manage_devices": "Gestionar Dispositivos y Mandos",
+          "backup_menu": "Copias de Seguridad (Exportar / Importar JSON)",
+          "radio_settings": "Ajustes de Radio y Puerto USB"
+        }
+      },
+      "manage_devices": {
+        "title": "Dispositivos y Mandos RF",
+        "description": "Selecciona un dispositivo existente en la lista para gestionar sus botones o escribe el nombre de uno nuevo.",
+        "data": {
+          "device_name": "Dispositivo (elige existente o escribe nuevo)"
+        }
+      },
+      "device_menu": {
+        "title": "Dispositivo: {device_name}",
+        "description": "### Dispositivo: {device_name}\n**Botones registrados:** {button_count}\n\n{status_msg}---\nSelecciona una acción para este dispositivo o vuelve al menú anterior:",
+        "menu_options": {
+          "device_learn_button": "Aprender Nuevo Botón",
+          "device_manage_buttons": "Gestionar / Editar Botones",
+          "device_edit_device": "Editar Dispositivo (Renombrar / Eliminar)",
+          "manage_devices": "Cambiar de Dispositivo",
+          "finish": "Finalizar y Cerrar",
+          "init": "Volver al Menú Principal"
+        }
+      },
+      "device_manage_buttons": {
+        "title": "Botones de {device_name}",
+        "description": "{status_msg}Selecciona el botón que deseas ver, probar o editar:",
+        "data": {
+          "button_name": "Botón a Gestionar"
+        }
+      },
+      "button_edit_menu": {
+        "title": "Editar Botón: {button_name}",
+        "description": "{inspect_message}{button_details}\n\n---\n**Acciones Disponibles:** Selecciona una de las opciones a continuación:",
+        "menu_options": {
+          "button_test_code": "Probar Envío RF (Código)",
+          "button_test_raw": "Probar Envío RF (Pulsos Raw)",
+          "button_relearn": "Sobrescribir / Re-grabar Código (5 segundos)",
+          "button_rename": "Renombrar Botón",
+          "button_move": "Mover a Otro Dispositivo",
+          "button_repeats": "Ajustar Repeticiones de Envío",
+          "button_toggle_mode": "Alternar Modo de Envío Preferido",
+          "button_delete": "Eliminar este Botón",
+          "device_manage_buttons": "Volver a Selección de Botones",
+          "device_menu": "Volver al Menú del Dispositivo",
+          "init": "Volver al Menú Principal"
+        }
+      },
+      "button_rename": {
+        "title": "Renombrar Botón: {button_name}",
+        "description": "Introduce el nuevo nombre para este botón en '{device_name}':",
+        "data": {
+          "new_button_name": "Nuevo Nombre del Botón"
+        }
+      },
+      "button_move": {
+        "title": "Mover Botón: {button_name}",
+        "description": "Selecciona o escribe el dispositivo de destino al que deseas transferir '{button_name}':",
+        "data": {
+          "destination_device": "Dispositivo de Destino"
+        }
+      },
+      "button_repeats": {
+        "title": "Repeticiones de Envío: {button_name}",
+        "description": "Configura cuántas ráfagas RF se transmitirán al pulsar el botón '{button_name}':",
+        "data": {
+          "repeats": "Repeticiones de Envío"
+        }
+      },
+      "button_delete": {
+        "title": "Eliminar Botón: {button_name}",
+        "description": "¿Estás seguro de que deseas eliminar permanentemente el botón '{button_name}' del dispositivo '{device_name}'?",
+        "data": {
+          "confirm": "Confirmar eliminación definitiva"
+        }
+      },
+      "device_edit_device": {
+        "title": "Editar Dispositivo: {device_name}",
+        "description": "Gestiona el dispositivo '{device_name}' (botones registrados: {button_count}). Selecciona una opción:",
+        "menu_options": {
+          "device_rename": "Renombrar Dispositivo",
+          "device_delete": "Eliminar Dispositivo Completo",
+          "device_menu": "Volver al Menú del Dispositivo",
+          "init": "Volver al Menú Principal"
+        }
+      },
+      "device_rename": {
+        "title": "Renombrar Dispositivo: {device_name}",
+        "description": "Introduce el nuevo nombre para este dispositivo. Se actualizarán automáticamente todos sus botones asociados y su sensor:",
+        "data": {
+          "new_device_name": "Nuevo Nombre del Dispositivo"
+        }
+      },
+      "device_delete": {
+        "title": "Eliminar Dispositivo: {device_name}",
+        "description": "¿Estás seguro de que deseas eliminar el dispositivo '{device_name}' y todos sus botones asociados de Home Assistant?",
+        "data": {
+          "confirm": "Confirmar eliminación definitiva"
+        }
+      },
+      "device_learn_button": {
+        "title": "Aprender Botón RF: {device_name}",
+        "description": "Paso 1 de 2: Introduce el nombre del botón, repeticiones de envío y el filtro de potencia de señal para el aprendizaje:",
+        "data": {
+          "button_name": "Nombre del Botón / Comando",
+          "repeats": "Repeticiones de Transmisión",
+          "min_rssi": "Filtro de Potencia para Grabación (dBm)"
+        }
+      },
+      "device_learn_record": {
+        "title": "Grabar Botón: {button_name}",
+        "description": "Estás a punto de grabar el botón '{button_name}' de '{device_name}'.\n\nFiltro de potencia activo: `{learn_rssi} dBm` (solo aceptará señales potentes cercanas; tu sensibilidad habitual se restaurará automáticamente al terminar).\n\nInstrucciones:\n1. Ten el mando a 10–30 cm del transceptor CC1101.\n2. Haz clic en Enviar abajo para comenzar.\n3. En cuanto hagas clic, mantén pulsado el botón de tu mando físico durante 5 segundos continuos."
+      },
+      "device_learn_failed": {
+        "title": "Error al Grabar: {button_name}",
+        "description": "No se detectó una señal consistente y estable.\n\nMotivo: {error_reason} ({sample_count} ráfagas recibidas).\nFiltro de potencia actual: {learn_rssi} dBm.\n\nSi hay ruido o señales de otros mandos interfiriendo, puedes ajustar el filtro de potencia para restringir estrictamente a señales potentes con el mando cerca de la antena.\n\n¿Qué deseas hacer?",
+        "menu_options": {
+          "device_learn_record": "Reintentar Grabación (5 segundos continuos)",
+          "device_learn_tune_rssi": "Ajustar Filtro de Potencia",
+          "device_learn_button": "Cambiar Nombre del Botón",
+          "device_menu": "Volver al Menú del Dispositivo"
+        }
+      },
+      "device_learn_tune_rssi": {
+        "title": "Ajustar Filtro de Potencia: {button_name}",
+        "description": "Configura el filtro de potencia de señal (RSSI) exclusivamente para la grabación de este botón.\n\nValores más altos (ej: -50 dBm o -40 dBm) restringen la grabación estrictamente a señales potentes con el mando pegado a la antena, ignorando señales lejanas o ruidos.\n\nUna vez grabado, tu transceptor restaurará automáticamente su sensibilidad normal para recibir a distancia.",
+        "data": {
+          "learn_min_rssi": "Filtro de Potencia para Grabación (dBm)"
+        }
+      },
+      "device_learn_verify": {
+        "title": "Probar Detección del Mando: {button_name}",
+        "description": "El botón ya está guardado con éxito ({candidate_desc}).\n\nSi deseas comprobar la detección del mando físico:\n1. Haz clic en Enviar abajo.\n2. Pulsa el botón de tu mando UNA VEZ (tienes 12 segundos)."
+      },
+      "device_learn_verify_failed": {
+        "title": "Detección No Recibida: {button_name}",
+        "description": "No se detectó ninguna pulsación dentro de los 12 segundos.\n\nEl botón '{button_name}' sigue guardado con la señal confirmada de los 5 segundos ({candidate_desc}).\n\n¿Qué deseas hacer ahora?",
+        "menu_options": {
+          "device_learn_verify": "Reintentar Comprobación (pulsar 1 vez)",
+          "device_test_send": "Probar Envío RF desde Home Assistant",
+          "device_learn_button": "Aprender otro botón para este dispositivo",
+          "device_learn_record": "Volver a Grabar (5 segundos continuos)",
+          "device_menu": "Finalizar y volver al menú del dispositivo"
+        }
+      },
+      "device_test_send": {
+        "title": "Probar Envío RF: {button_name}",
+        "description": "Transmitiendo señal para '{button_name}' ({device_name}).\n\nComprueba si tu aparato físico ha reaccionado.\n\n¿Qué deseas hacer ahora?",
+        "menu_options": {
+          "device_test_send": "Enviar Señal Otra Vez (Código)",
+          "device_test_send_raw": "Probar Envío con Pulsos Raw",
+          "device_learn_verify": "Probar Detección del Mando Físico",
+          "device_learn_button": "Aprender otro botón para este dispositivo",
+          "device_menu": "Volver al menú del dispositivo",
+          "finish": "Finalizar y Cerrar"
+        }
+      },
+      "device_learn_success": {
+        "title": "¡Botón Aprendido y Guardado con Éxito!",
+        "description": "El botón '{button_name}' ha sido guardado para '{device_name}'.\n\nSeñal confirmada: {candidate_desc}.\n\nSe ha creado la entidad botón en tu panel y se ha actualizado el sensor del dispositivo.\n\n¿Qué deseas hacer ahora?",
+        "menu_options": {
+          "device_test_send": "Probar Envío RF (Comprobar aparato)",
+          "device_learn_verify": "Probar Detección del Mando Físico",
+          "device_learn_button": "Aprender otro botón para este dispositivo",
+          "device_menu": "Volver al menú del dispositivo",
+          "finish": "Finalizar y Cerrar"
+        }
+      },
+      "radio_settings": {
+        "title": "Ajustes de Radio CC1101 y Puerto USB",
+        "description": "Configura el puerto USB conectado, frecuencia, potencia y sensibilidad de recepción en tiempo real:",
+        "data": {
+          "port": "Puerto Serie USB",
+          "frequency": "Frecuencia de Operación",
+          "modulation": "Modulación",
+          "tx_power": "Potencia de Transmisión (dBm)",
+          "min_rssi": "Sensibilidad del Receptor (Squelch dBm)",
+          "repeats": "Repeticiones de Envío por Defecto",
+          "bandwidth": "Ancho de Banda de Filtro (kHz)",
+          "min_repeats": "Repeticiones Consecutivas Mínimas",
+          "rx_mode": "Modo de Recepción RF"
+        }
+      },
+      "export_json": {
+        "title": "Exportar Botones a JSON",
+        "description": "### Copia de Seguridad de Botones y Dispositivos\n**Dispositivos:** {device_count} | **Botones:** {button_count}{backup_note}\n\nHaz clic en el cuadro de texto inferior, pulsa **Ctrl+A** y **Ctrl+C** (o mantén pulsado en el móvil) para copiar el JSON completo:\n\n```json\n{json_text}\n```",
+        "data": {
+          "json_data": "Código JSON de Respaldo"
+        }
+      },
+      "import_json": {
+        "title": "Importar Botones desde JSON",
+        "description": "Pega a continuación el bloque JSON exportado previamente para restaurar dispositivos y botones. Si dejas el campo vacío y continúas, se cancelará y volverás al menú de copias de seguridad.\n\n---",
+        "data": {
+          "json_data": "Contenido JSON",
+          "mode": "Modo de Importación"
+        }
+      },
+      "backup_menu": {
+        "title": "Copias de Seguridad JSON",
+        "description": "### Copia de Seguridad y Restauración de Mandos RF\n{status_msg}Exporta toda la configuración de botones a formato JSON o recupera una copia guardada previamente:\n\n---",
+        "menu_options": {
+          "export_json": "Exportar a JSON (Copia de Seguridad)",
+          "import_json": "Importar desde JSON",
+          "init": "Volver al Menú Principal"
+        }
+      }
+    },
+    "error": {
+      "device_name_required": "Por favor introduce un nombre para el dispositivo.",
+      "button_name_required": "Por favor introduce un nombre para el botón a aprender.",
+      "no_buttons_found": "No se encontraron botones válidos en el JSON proporcionado.",
+      "empty_json": "El contenido JSON no puede estar vacío.",
+      "invalid_json": "El texto introducido no es un JSON válido. Comprueba el formato.",
+      "same_device": "El dispositivo de destino debe ser diferente al dispositivo actual.",
+      "button_not_found": "El botón seleccionado no existe."
+    },
+    "abort": {
+      "no_buttons_found": "No hay botones para gestionar en este dispositivo."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "dev_last_button": {
+        "name": "Último Botón Pulsado"
+      }
+    }
+  }
+}

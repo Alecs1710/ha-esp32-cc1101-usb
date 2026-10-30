@@ -1,0 +1,291 @@
+send_raw:
+  name: Transmit Raw RF Timings
+  description: Transmits a custom microsecond pulse sequence over USB to the CC1101 transceiver.
+  fields:
+    code:
+      name: RAW Sequence
+      description: Comma-separated string of alternating high/low timings in microseconds.
+      required: true
+      example: "350,1050,350,1050,1050,350"
+      selector:
+        text:
+    repeats:
+      name: Repetitions
+      description: Number of times to repeat the packet. Defaults to device configured repeats (e.g. 6).
+      required: false
+      example: 6
+      selector:
+        number:
+          min: 1
+          max: 25
+          mode: box
+    gap:
+      name: Inter-packet Gap
+      description: Silence delay in microseconds between repeated packets.
+      required: false
+      default: 8250
+      example: 8250
+      selector:
+        number:
+          min: 1000
+          max: 50000
+          unit_of_measurement: "µs"
+          mode: box
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry if multiple ESP32 transceivers are connected.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+send_code:
+  name: Transmit Standard RF Code
+  description: Transmits an RF code using standard protocols (e.g. RCSwitch Protocol 1-6 for PT2262, EV1527, SC5262).
+  fields:
+    code:
+      name: RF Code
+      description: The numeric decimal code to transmit (e.g. remote button ID).
+      required: true
+      example: 1234567
+      selector:
+        number:
+          min: 1
+          max: 18446744073709551615
+          mode: box
+    bits:
+      name: Bit Length
+      description: Total bit count of the packet (standard remotes are 24-bit, 32-bit, or 36-bit).
+      required: false
+      default: 24
+      example: 36
+      selector:
+        number:
+          min: 8
+          max: 64
+          mode: box
+    protocol:
+      name: Protocol Number
+      description: Standard protocol index (1 = EV1527/PT2262, 2 = 650µs, 6 = HT6P20B).
+      required: false
+      default: 1
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 32
+          mode: box
+    pulse_length:
+      name: Pulse Length
+      description: Base clock pulse width in microseconds (defaults to 350 µs for standard 433 MHz).
+      required: false
+      default: 350
+      example: 350
+      selector:
+        number:
+          min: 50
+          max: 2000
+          unit_of_measurement: "µs"
+          mode: box
+    repeats:
+      name: Repetitions
+      description: Number of times to repeat transmission.
+      required: false
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 25
+          mode: box
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+set_config:
+  name: Configure CC1101 Radio
+  description: Dynamically adjust CC1101 frequency, modulation, bandwidth, and output power live without rebooting.
+  fields:
+    frequency:
+      name: Frequency
+      description: Carrier frequency in MHz (e.g. 433.92, 315.00, 868.35, 915.00).
+      required: false
+      example: 433.92
+      selector:
+        number:
+          min: 300.0
+          max: 928.0
+          step: 0.01
+          unit_of_measurement: "MHz"
+          mode: box
+    modulation:
+      name: Modulation
+      description: Radio modulation type.
+      required: false
+      example: "ASK/OOK"
+      selector:
+        select:
+          options:
+            - "ASK/OOK"
+            - "2-FSK"
+    bandwidth:
+      name: Filter Bandwidth
+      description: Receiver filter bandwidth in kHz.
+      required: false
+      example: 325.0
+      selector:
+        number:
+          min: 58.0
+          max: 812.0
+          unit_of_measurement: "kHz"
+          mode: box
+    tx_power:
+      name: Output Power
+      description: Output transmission power in dBm.
+      required: false
+      example: 10
+      selector:
+        number:
+          min: -30
+          max: 10
+          unit_of_measurement: "dBm"
+          mode: slider
+    min_rssi:
+      name: Receiver Sensitivity (Squelch)
+      description: Minimum RSSI threshold in dBm to accept raw pulses (e.g. -75 dBm).
+      required: false
+      example: -75
+      selector:
+        number:
+          min: -100
+          max: -10
+          unit_of_measurement: "dBm"
+          mode: slider
+    min_repeats:
+      name: Minimum Repeats
+      description: Number of identical consecutive repetitions required for raw signal verification.
+      required: false
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+    rx_mode:
+      name: Reception Mode
+      description: RF reception filtering mode (Decoded Only, All, Learn Mode).
+      required: false
+      example: "Decoded Only (Clean)"
+      selector:
+        select:
+          options:
+            - "Decoded Only (Clean)"
+            - "All (Decoded + Raw)"
+            - "Learn Mode"
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+learn_command:
+  name: Learn RF Command (5-Sample Average)
+  description: Starts learning mode. Press the physical remote button 5 times to clean, filter, and save the signal permanently.
+  fields:
+    name:
+      name: Command Name
+      description: Friendly name for the button or signal you want to store (e.g., Living Room Fan, Garage Door).
+      required: true
+      example: "Living Room Fan"
+      selector:
+        text:
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+send_command:
+  name: Send Stored RF Command
+  description: Transmits a previously learned and stored RF command by its name.
+  fields:
+    name:
+      name: Command Name
+      description: Name of the stored command to transmit.
+      required: true
+      example: "Living Room Fan"
+      selector:
+        text:
+    repeats:
+      name: Repetitions
+      description: Optional override for transmission repeat count.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 25
+          mode: box
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+delete_command:
+  name: Delete Stored RF Command
+  description: Removes a stored RF command from persistent storage.
+  fields:
+    name:
+      name: Command Name
+      description: Name of the stored command to delete.
+      required: true
+      example: "Living Room Fan"
+      selector:
+        text:
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+ping:
+  name: Ping Transceiver
+  description: Sends a ping message over USB to verify transceiver responsiveness.
+  fields:
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb
+
+flash_firmware:
+  name: Flash ESP32 Firmware
+  description: Flashes new firmware to the connected ESP32 directly via USB serial without unplugging or VM restarts.
+  fields:
+    file_path:
+      name: Firmware Binary Path
+      description: Optional path to a .bin firmware file. If omitted, uses the bundled firmware.bin in the integration.
+      required: false
+      example: "/config/custom_components/esp32_cc1101_usb/firmware.bin"
+      selector:
+        text:
+    config_entry_id:
+      name: Target Device
+      description: Optional target config entry ID if multiple transceivers are connected.
+      required: false
+      selector:
+        config_entry:
+          integration: esp32_cc1101_usb

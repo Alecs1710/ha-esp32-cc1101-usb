@@ -1,0 +1,157 @@
+{
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "manage_devices": "mdi:remote",
+          "backup_menu": "mdi:database-sync-outline",
+          "radio_settings": "mdi:radio-tower"
+        }
+      },
+      "device_menu": {
+        "menu_options": {
+          "device_learn_button": "mdi:record-rec",
+          "device_manage_buttons": "mdi:remote-tv",
+          "device_edit_device": "mdi:folder-edit-outline",
+          "manage_devices": "mdi:arrow-left-circle-outline",
+          "finish": "mdi:check-circle-outline",
+          "init": "mdi:arrow-left-circle-outline"
+        }
+      },
+      "button_edit_menu": {
+        "menu_options": {
+          "button_test_code": "mdi:transmission-tower",
+          "button_test_raw": "mdi:waveform",
+          "button_relearn": "mdi:record-rec",
+          "button_rename": "mdi:rename-box",
+          "button_move": "mdi:swap-horizontal",
+          "button_repeats": "mdi:repeat",
+          "button_toggle_mode": "mdi:swap-vertical",
+          "button_delete": "mdi:delete-outline",
+          "device_manage_buttons": "mdi:card-search-outline",
+          "device_menu": "mdi:arrow-left-circle-outline",
+          "init": "mdi:home-outline"
+        }
+      },
+      "device_edit_device": {
+        "menu_options": {
+          "device_rename": "mdi:rename-box",
+          "device_delete": "mdi:delete-forever-outline",
+          "device_menu": "mdi:arrow-left-circle-outline",
+          "init": "mdi:home-outline"
+        }
+      },
+      "device_learn_success": {
+        "menu_options": {
+          "device_test_send": "mdi:transmission-tower",
+          "device_learn_verify": "mdi:remote",
+          "device_learn_button": "mdi:plus-circle-outline",
+          "device_menu": "mdi:arrow-left-circle-outline",
+          "finish": "mdi:check-circle-outline"
+        }
+      },
+      "device_test_send": {
+        "menu_options": {
+          "device_test_send": "mdi:refresh",
+          "device_test_send_raw": "mdi:waveform",
+          "device_learn_verify": "mdi:remote",
+          "device_learn_button": "mdi:plus-circle-outline",
+          "device_menu": "mdi:arrow-left-circle-outline",
+          "finish": "mdi:check-circle-outline"
+        }
+      },
+      "device_learn_failed": {
+        "menu_options": {
+          "device_learn_record": "mdi:refresh",
+          "device_learn_tune_rssi": "mdi:tune",
+          "device_learn_button": "mdi:rename-box",
+          "device_menu": "mdi:arrow-left-circle-outline"
+        }
+      },
+      "device_learn_verify_failed": {
+        "menu_options": {
+          "device_learn_verify": "mdi:refresh",
+          "device_test_send": "mdi:transmission-tower",
+          "device_learn_button": "mdi:plus-circle-outline",
+          "device_learn_record": "mdi:record-rec",
+          "device_menu": "mdi:arrow-left-circle-outline"
+        }
+      },
+      "device_inspect_button_detail": {
+        "menu_options": {
+          "inspect_test_code": "mdi:transmission-tower",
+          "inspect_test_raw": "mdi:waveform",
+          "inspect_toggle_mode": "mdi:swap-vertical",
+          "inspect_move_button": "mdi:swap-horizontal",
+          "button_relearn": "mdi:record-rec",
+          "button_rename": "mdi:rename-box",
+          "button_repeats": "mdi:repeat",
+          "button_delete": "mdi:delete-outline",
+          "device_manage_buttons": "mdi:card-search-outline",
+          "device_menu": "mdi:arrow-left-circle-outline"
+        }
+      },
+      "backup_menu": {
+        "menu_options": {
+          "export_json": "mdi:file-export-outline",
+          "import_json": "mdi:file-import-outline",
+          "init": "mdi:arrow-left-circle-outline"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "last_code": {
+        "default": "mdi:radio-tower"
+      },
+      "rssi": {
+        "default": "mdi:signal-variant"
+      },
+      "active_frequency": {
+        "default": "mdi:sine-wave"
+      },
+      "radio_status": {
+        "default": "mdi:chip"
+      },
+      "learning_status": {
+        "default": "mdi:remote"
+      },
+      "dev_last_button": {
+        "default": "mdi:remote"
+      }
+    },
+    "button": {
+      "repeat_last_code": {
+        "default": "mdi:repeat"
+      },
+      "ping": {
+        "default": "mdi:connection"
+      },
+      "reset": {
+        "default": "mdi:restart"
+      },
+      "saved_command": {
+        "default": "mdi:remote-tv"
+      }
+    },
+    "select": {
+      "rf_reception_mode": {
+        "default": "mdi:tune"
+      }
+    },
+    "number": {
+      "receiver_sensitivity_squelch": {
+        "default": "mdi:signal-distance-variant"
+      },
+      "minimum_repeats_filter": {
+        "default": "mdi:numeric"
+      }
+    },
+    "remote": {
+      "transceiver": {
+        "default": "mdi:remote"
+      }
+    }
+  }
+}
