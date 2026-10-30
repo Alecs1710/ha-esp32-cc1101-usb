@@ -60,6 +60,7 @@ from .const import (
     RX_MODE_ALL,
     DEFAULT_RX_MODE,
     RX_MODE_OPTIONS,
+    get_rolling_cycle_codes,
 )
 
 
@@ -609,6 +610,11 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
             repeats = code_data.get("repeats", DEFAULT_REPEATS)
             mode_lbl = ("Código Estándar" if curr_mode == "code" else "Pulsos Raw") if is_es else ("Standard Code" if curr_mode == "code" else "Raw Pulses")
 
+            cycle = code_data.get("cycle") or (get_rolling_cycle_codes(code_data.get("code")) if "code" in code_data else None)
+            if cycle:
+                c_type = "rolling_code"
+                mode_lbl = "Código Rotativo (8 Estados)" if is_es else "Rotating Code (8 States)"
+
             if is_es:
                 details_lines.append("<details open>")
                 details_lines.append(f"<summary><b>Información de Señal ({btn_name})</b> <i>(clic para plegar)</i></summary>\n")
@@ -630,11 +636,23 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 hex_str = f" (`0x{int(c_val):X}`)" if isinstance(c_val, (int, str)) and str(c_val).isdigit() else ""
                 if is_es:
                     details_lines.append(f"> | **Código Decodificado** | `{c_val}`{hex_str} |")
+                    if cycle:
+                        try:
+                            cur_step = cycle.index(int(c_val)) + 1
+                        except (ValueError, TypeError):
+                            cur_step = 1
+                        details_lines.append(f"> | **Ciclo Rotativo** | Paso {cur_step} de {len(cycle)} códigos |")
                     details_lines.append(
                         f"> | **Parámetros RF** | Bits: `{code_data.get('bits', 24)}` · Protocolo: `{code_data.get('protocol', 1)}` · Pulso: `{code_data.get('pulse_length', 350)} µs` |"
                     )
                 else:
                     details_lines.append(f"> | **Decoded Code** | `{c_val}`{hex_str} |")
+                    if cycle:
+                        try:
+                            cur_step = cycle.index(int(c_val)) + 1
+                        except (ValueError, TypeError):
+                            cur_step = 1
+                        details_lines.append(f"> | **Rotating Cycle** | Step {cur_step} of {len(cycle)} codes |")
                     details_lines.append(
                         f"> | **RF Parameters** | Bits: `{code_data.get('bits', 24)}` · Protocol: `{code_data.get('protocol', 1)}` · Pulse: `{code_data.get('pulse_length', 350)} µs` |"
                     )
@@ -643,6 +661,17 @@ class Esp32Cc1101OptionsFlow(config_entries.OptionsFlow):
                 details_lines.append(f"> | **Repeticiones de Envío** | `{repeats}` ráfagas |")
             else:
                 details_lines.append(f"> | **Transmit Repeats** | `{repeats}` bursts |")
+
+            if cycle:
+                cycle_title = f"Ver Ciclo de 8 Códigos ({len(cycle)} estados) - Clic para desplegar" if is_es else f"View 8-Code Rolling Cycle ({len(cycle)} states) - Click to expand"
+                details_lines.append("\n<details>")
+                details_lines.append(f"<summary><b>{cycle_title}</b></summary>\n")
+                cycle_text_lines = []
+                for idx, c_item in enumerate(cycle):
+                    marker = " -> Actual" if str(c_item) == str(code_data.get("code")) else ""
+                    cycle_text_lines.append(f"[Paso {idx + 1}]: 0x{c_item:08X} ({c_item}){marker}")
+                details_lines.append("```text\n" + "\n".join(cycle_text_lines) + "\n```\n")
+                details_lines.append("</details>")
 
             raw_str = code_data.get("raw") or ""
             if raw_str:

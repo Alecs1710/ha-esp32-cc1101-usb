@@ -20,7 +20,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import Esp32Cc1101Client
-from .const import CONF_PORT, DOMAIN
+from .const import CONF_PORT, DOMAIN, get_rolling_cycle_codes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,17 +107,21 @@ class Esp32Cc1101Remote(RemoteEntity):
             if saved is not None:
                 if isinstance(saved, dict) and "code" in saved:
                     code_val = saved["code"]
-                    if saved.get("type") == "rolling_code":
-                        delta = saved.get("delta", 15)
-                        next_code = code_val + delta
-                        counter = ((next_code & 0xFF) >> 4) & 0x0F
-                        if counter > 7:
-                            next_code = (saved.get("base_id", 0) << 8) | 0x07
+                    cycle = saved.get("cycle") or get_rolling_cycle_codes(code_val)
+                    if cycle:
+                        try:
+                            cur_idx = cycle.index(int(code_val))
+                            next_idx = (cur_idx + 1) % len(cycle)
+                        except (ValueError, TypeError):
+                            next_idx = 0
+                        next_code = cycle[next_idx]
                         saved["code"] = next_code
+                        saved["type"] = "rolling_code"
+                        saved["cycle"] = cycle
+                        code_val = next_code
                         self.hass.async_create_task(
                             self._entry_data["store"].async_save(saved_codes)
                         )
-                        code_val = next_code
                     await self.client.async_send_code(
                         code=code_val,
                         bits=saved.get("bits", 24),

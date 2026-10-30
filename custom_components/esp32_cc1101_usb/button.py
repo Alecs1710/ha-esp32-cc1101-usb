@@ -13,7 +13,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import Esp32Cc1101Client
-from .const import CONF_PORT, DEFAULT_REPEATS, DOMAIN
+from .const import CONF_PORT, DEFAULT_REPEATS, DOMAIN, get_rolling_cycle_codes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -190,6 +190,13 @@ class Esp32SavedCommandButton(ButtonEntity):
                     attrs["code_hex"] = f"0x{int(c):X}"
                 except (ValueError, TypeError):
                     pass
+                cycle = code_data.get("cycle") or get_rolling_cycle_codes(c)
+                if cycle:
+                    attrs["rolling_cycle_length"] = len(cycle)
+                    try:
+                        attrs["current_cycle_step"] = cycle.index(int(c)) + 1
+                    except (ValueError, TypeError):
+                        pass
             attrs["bits"] = code_data.get("bits")
             attrs["protocol"] = code_data.get("protocol")
             attrs["pulse_length_us"] = code_data.get("pulse_length")
@@ -226,8 +233,25 @@ class Esp32SavedCommandButton(ButtonEntity):
         if isinstance(code, dict) and send_mode == "raw" and "raw" in code and code["raw"]:
             await self.client.async_send_raw(code["raw"], repeats=custom_repeats)
         elif isinstance(code, dict) and "code" in code and code["code"] is not None:
+            code_val = code["code"]
+            cycle = code.get("cycle") or get_rolling_cycle_codes(code_val)
+            if cycle:
+                # Advance sequentially to the next code in the 8-state rolling cycle
+                try:
+                    cur_idx = cycle.index(int(code_val))
+                    next_idx = (cur_idx + 1) % len(cycle)
+                except (ValueError, TypeError):
+                    next_idx = 0
+                next_code = cycle[next_idx]
+                code["code"] = next_code
+                code["type"] = "rolling_code"
+                code["cycle"] = cycle
+                code_val = next_code
+                saved_codes = self._entry_data.get("saved_codes", {})
+                self.hass.async_create_task(self._entry_data["store"].async_save(saved_codes))
+
             await self.client.async_send_code(
-                code=code["code"],
+                code=code_val,
                 bits=code.get("bits", 24),
                 protocol=code.get("protocol", 1),
                 pulse_length=code.get("pulse_length", 350),

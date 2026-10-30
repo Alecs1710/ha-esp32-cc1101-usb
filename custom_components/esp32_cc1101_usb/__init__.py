@@ -44,6 +44,7 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
     LEARN_STEPS,
+    get_rolling_cycle_codes,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -228,6 +229,25 @@ def _analyze_learning_consensus(
 
                 most_common_code, code_count = Counter(codes).most_common(1)[0]
                 if code_count >= 3:
+                    cycle = get_rolling_cycle_codes(most_common_code)
+                    if cycle:
+                        base_id = most_common_code >> 8
+                        desc = (
+                            f"Decoded Rolling Code "
+                            f"(Base: 0x{base_id:06X}, 8-state cycle, {dominant_bits}b, Proto {proto})"
+                        )
+                        return {
+                            "type": "rolling_code",
+                            "code": most_common_code,
+                            "base_id": base_id,
+                            "delta": 15,
+                            "cycle": cycle,
+                            "bits": dominant_bits,
+                            "protocol": proto,
+                            "pulse_length": pulse_len,
+                            "raw": rep_raw,
+                        }, desc
+
                     desc = (
                         f"Decoded Protocol "
                         f"(Code: {most_common_code}, {dominant_bits}b, Proto {proto}, {code_count} frames)"
@@ -708,14 +728,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if c_val is not None:
             code_map.setdefault(str(c_val), []).append(k)
 
-        if v.get("type") == "rolling_code":
-            _LOGGER.warning(
-                "Sanitizing corrupted rolling_code button '%s': restoring to reliable fixed code", k
-            )
-            v["type"] = "code"
-            v.pop("base_id", None)
-            v.pop("delta", None)
-            modified_store = True
+        # Auto-detect and upgrade 32-bit rotating remotes to full 8-code cycle support
+        cycle = get_rolling_cycle_codes(c_val)
+        if cycle:
+            if v.get("type") != "rolling_code" or "cycle" not in v:
+                v["type"] = "rolling_code"
+                v["base_id"] = int(c_val) >> 8
+                v["delta"] = 15
+                v["cycle"] = cycle
+                modified_store = True
 
     # Warn if duplicate codes exist across different buttons
     for c_str, btn_list in code_map.items():
@@ -1479,55 +1500,38 @@ def _handle_passive_rf_receive(
                 matched_data = v
                 break
 
-        # Check 2: Explicit rolling code match by 24-bit base_id (ONLY for 32-bit rolling codes)
+        # Check 2: 32-bit 8-state rotating/rolling cycle match
         if not matched_key and rx_int is not None and rx_int > 0xFFFFFF:
-            b_rx = rx_int & 0xFF
-            if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7:
-                rx_base = rx_int >> 8
-                for k, v in saved_codes.items():
-                    if k.startswith("__") or not isinstance(v, dict):
-                        continue
-                    if v.get("type") == "rolling_code":
-                        base_id = v.get("base_id")
-                        try:
-                            if base_id and int(base_id) == rx_base and rx_base > 0xFFFF:
-                                matched_key = k
-                                matched_data = v
-                                v["code"] = rx_int
-                                hass.async_create_task(entry_data["store"].async_save(saved_codes))
-                                break
-                        except (ValueError, TypeError):
-                            pass
-
-        # Check 3: Auto-detect 32-bit counter rolling code (counter + checksum == 7)
-        # ONLY if both rx and stored are 32-bit, share identical 24-bit base_id, and both pass checksum == 7!
-        # NO loose thresholds (abs <= 255 is strictly prohibited)!
-        if not matched_key and rx_int is not None and rx_int > 0xFFFFFF:
-            b_rx = rx_int & 0xFF
-            if (((b_rx >> 4) & 0x0F) + (b_rx & 0x0F)) == 7:
-                rx_base = rx_int >> 8
-                for k, v in saved_codes.items():
-                    if k.startswith("__") or not isinstance(v, dict):
-                        continue
-                    stored_code = v.get("code")
-                    if stored_code is not None:
-                        try:
-                            stored_int = int(stored_code)
-                            if stored_int > 0xFFFFFF:
-                                stored_base = stored_int >> 8
-                                if stored_base == rx_base and stored_base > 0xFFFF:
-                                    b_stored = stored_int & 0xFF
-                                    if (((b_stored >> 4) & 0x0F) + (b_stored & 0x0F)) == 7:
-                                        matched_key = k
-                                        matched_data = v
-                                        v["type"] = "rolling_code"
-                                        v["base_id"] = rx_base
-                                        v["delta"] = 15
-                                        v["code"] = rx_int
-                                        hass.async_create_task(entry_data["store"].async_save(saved_codes))
-                                        break
-                        except (ValueError, TypeError):
-                            pass
+            rx_base = rx_int >> 8
+            rx_cycle = get_rolling_cycle_codes(rx_int)
+            for k, v in saved_codes.items():
+                if k.startswith("__") or not isinstance(v, dict):
+                    continue
+                stored_code = v.get("code")
+                if stored_code is not None:
+                    try:
+                        s_int = int(stored_code)
+                        stored_cycle = v.get("cycle") or get_rolling_cycle_codes(s_int)
+                        # Matches if either belongs to the other's rolling cycle, or share identical 24-bit button ID
+                        if (
+                            (rx_cycle and s_int in rx_cycle)
+                            or (stored_cycle and rx_int in stored_cycle)
+                            or (rx_base > 0xFFFF and (s_int >> 8) == rx_base)
+                        ):
+                            matched_key = k
+                            matched_data = v
+                            v["type"] = "rolling_code"
+                            v["base_id"] = rx_base
+                            v["delta"] = 15
+                            v["code"] = rx_int
+                            if rx_cycle:
+                                v["cycle"] = rx_cycle
+                            elif stored_cycle:
+                                v["cycle"] = stored_cycle
+                            hass.async_create_task(entry_data["store"].async_save(saved_codes))
+                            break
+                    except (ValueError, TypeError):
+                        pass
 
     # 2. Only if rx_code was NOT decoded (e.g. event == "rx_raw" for custom protocols)
     # CRITICAL: We NEVER match by raw correlation if rx_code was already decoded by the radio!

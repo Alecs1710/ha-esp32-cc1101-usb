@@ -1,5 +1,7 @@
 """Constants for the ESP32 CC1101 USB RF integration."""
 
+from typing import Any
+
 DOMAIN = "esp32_cc1101_usb"
 
 # Configuration keys
@@ -117,3 +119,44 @@ EVENT_CODE_RECEIVED = "esp32_cc1101_usb_code_received"
 STORAGE_KEY = "esp32_cc1101_usb_codes"
 STORAGE_VERSION = 1
 LEARN_STEPS = 5
+
+
+def get_rolling_cycle_codes(code: Any) -> list[int] | None:
+    """Calculate the exact 8 codes in the rolling cycle for 32-bit rotating remotes.
+
+    These remotes (common in RF ceiling fans, blinds, and motorized screens) use a
+    24-bit button ID (bits 31..8) and an 8-state rotating counter in the lowest byte.
+    Each state in the sequence has delta = +15 (+0x0F) and constant nibble sum (n1 + n2).
+    """
+    if code is None:
+        return None
+    try:
+        code_int = int(code)
+    except (ValueError, TypeError):
+        return None
+
+    if code_int <= 0xFFFFFF:
+        return None
+
+    base = code_int >> 8
+    low = code_int & 0xFF
+    n1 = (low >> 4) & 0x0F
+    n2 = low & 0x0F
+    s = n1 + n2
+
+    min_n1 = max(0, s - 7)
+    max_n1 = min_n1 + 7
+    if max_n1 > 15 or s < min_n1:
+        return None
+
+    cycle: list[int] = []
+    for step in range(8):
+        c_n1 = min_n1 + step
+        c_n2 = s - c_n1
+        if c_n2 < 0 or c_n2 > 15:
+            return None
+        low_byte = (c_n1 << 4) | c_n2
+        cycle.append((base << 8) | low_byte)
+
+    return cycle if len(cycle) == 8 else None
+
